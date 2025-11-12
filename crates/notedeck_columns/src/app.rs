@@ -51,6 +51,7 @@ pub struct Damus {
     pub channels_cache: crate::channels::ChannelsCache,
     pub relay_config: crate::relay_config::RelayConfig,
     pub channel_dialog: ui::ChannelDialog,
+    pub channel_switcher: ui::ChannelSwitcher,
     pub view_state: ViewState,
     pub drafts: Drafts,
     pub timeline_cache: TimelineCache,
@@ -220,15 +221,25 @@ fn update_damus(damus: &mut Damus, app_ctx: &mut AppContext<'_>, ctx: &egui::Con
 
     // Handle keyboard shortcuts
     ctx.input(|i| {
-        // Escape to close dialog
-        if i.key_pressed(egui::Key::Escape) && damus.channel_dialog.is_open {
-            damus.channel_dialog.close();
+        // Escape to close dialogs
+        if i.key_pressed(egui::Key::Escape) {
+            if damus.channel_dialog.is_open {
+                damus.channel_dialog.close();
+            } else if damus.channel_switcher.is_open {
+                damus.channel_switcher.close();
+            }
         }
 
         // Cmd+N / Ctrl+N to open new channel dialog
         let cmd_n = (i.modifiers.command || i.modifiers.ctrl) && i.key_pressed(egui::Key::N);
-        if cmd_n && !damus.channel_dialog.is_open {
+        if cmd_n && !damus.channel_dialog.is_open && !damus.channel_switcher.is_open {
             damus.channel_dialog.open();
+        }
+
+        // Cmd+K / Ctrl+K to open channel switcher
+        let cmd_k = (i.modifiers.command || i.modifiers.ctrl) && i.key_pressed(egui::Key::K);
+        if cmd_k && !damus.channel_dialog.is_open && !damus.channel_switcher.is_open {
+            damus.channel_switcher.open();
         }
     });
 
@@ -461,6 +472,30 @@ fn render_damus(damus: &mut Damus, app_ctx: &mut AppContext<'_>, ui: &mut egui::
         }
     }
 
+    // Show channel switcher (Cmd+K)
+    if let Some(switcher_action) = damus.channel_switcher.show(
+        ui.ctx(),
+        app_ctx.i18n,
+        &damus.channels_cache,
+        app_ctx.accounts,
+    ) {
+        match switcher_action {
+            ui::ChannelSwitcherAction::SelectChannel(idx) => {
+                // Select the channel
+                damus
+                    .channels_cache
+                    .active_channels_mut(app_ctx.i18n, app_ctx.accounts)
+                    .select_channel(idx);
+
+                // Save channel state
+                storage::save_channels_cache(app_ctx.path, &damus.channels_cache);
+            }
+            ui::ChannelSwitcherAction::Close => {
+                // Switcher was closed, nothing to do
+            }
+        }
+    }
+
     // We use this for keeping timestamps and things up to date
     //ui.ctx().request_repaint_after(Duration::from_secs(5));
 
@@ -650,6 +685,7 @@ impl Damus {
             channels_cache,
             relay_config,
             channel_dialog: ui::ChannelDialog::default(),
+            channel_switcher: ui::ChannelSwitcher::default(),
             unrecognized_args,
             jobs,
             threads,
@@ -706,6 +742,7 @@ impl Damus {
             channels_cache,
             relay_config,
             channel_dialog: ui::ChannelDialog::default(),
+            channel_switcher: ui::ChannelSwitcher::default(),
             unrecognized_args: BTreeSet::default(),
             jobs: JobsCache::default(),
             threads: Threads::default(),
