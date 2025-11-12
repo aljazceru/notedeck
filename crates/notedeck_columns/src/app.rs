@@ -218,6 +218,20 @@ fn unknown_id_send(unknown_ids: &mut UnknownIds, pool: &mut RelayPool) {
 fn update_damus(damus: &mut Damus, app_ctx: &mut AppContext<'_>, ctx: &egui::Context) {
     app_ctx.img_cache.urls.cache.handle_io();
 
+    // Handle keyboard shortcuts
+    ctx.input(|i| {
+        // Escape to close dialog
+        if i.key_pressed(egui::Key::Escape) && damus.channel_dialog.is_open {
+            damus.channel_dialog.close();
+        }
+
+        // Cmd+N / Ctrl+N to open new channel dialog
+        let cmd_n = (i.modifiers.command || i.modifiers.ctrl) && i.key_pressed(egui::Key::N);
+        if cmd_n && !damus.channel_dialog.is_open {
+            damus.channel_dialog.open();
+        }
+    });
+
     if damus.columns(app_ctx.accounts).columns().is_empty() {
         damus
             .columns_mut(app_ctx.i18n, app_ctx.accounts)
