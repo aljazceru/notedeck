@@ -1,6 +1,7 @@
 pub mod account_login_view;
 pub mod accounts;
 pub mod add_column;
+pub mod channel_sidebar;
 pub mod column;
 pub mod configure_deck;
 pub mod edit_deck;
@@ -24,6 +25,7 @@ pub mod wallet;
 pub mod widgets;
 
 pub use accounts::AccountsView;
+pub use channel_sidebar::{ChannelSidebar, ChannelSidebarAction};
 pub use note::{PostReplyView, PostView};
 pub use preview::{Preview, PreviewApp, PreviewConfig};
 pub use profile::ProfileView;
