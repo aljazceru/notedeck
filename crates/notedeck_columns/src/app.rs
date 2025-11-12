@@ -43,6 +43,8 @@ pub struct Damus {
     state: DamusState,
 
     pub decks_cache: DecksCache,
+    pub channels_cache: crate::channels::ChannelsCache,
+    pub relay_config: crate::relay_config::RelayConfig,
     pub view_state: ViewState,
     pub drafts: Drafts,
     pub timeline_cache: TimelineCache,
@@ -521,6 +523,29 @@ impl Damus {
         let jobs = JobsCache::default();
         let threads = Threads::default();
 
+        // Load or create channels cache
+        let channels_cache = if let Some(channels_cache) = crate::storage::load_channels_cache(
+            app_context.path,
+            app_context.i18n,
+        ) {
+            info!("ChannelsCache: loading from disk");
+            channels_cache
+        } else {
+            info!("ChannelsCache: creating new with default channels");
+            crate::channels::ChannelsCache::default_channels_cache(app_context.i18n)
+        };
+
+        // Load or create relay config
+        let relay_config = if let Some(relay_config) = crate::storage::load_relay_config(
+            app_context.path,
+        ) {
+            info!("RelayConfig: loading from disk");
+            relay_config
+        } else {
+            info!("RelayConfig: creating new with default relays");
+            crate::relay_config::RelayConfig::default()
+        };
+
         Self {
             subscriptions,
             timeline_cache,
@@ -532,6 +557,8 @@ impl Damus {
             view_state: ViewState::default(),
             support,
             decks_cache,
+            channels_cache,
+            relay_config,
             unrecognized_args,
             jobs,
             threads,
@@ -564,6 +591,8 @@ impl Damus {
     pub fn mock<P: AsRef<Path>>(data_path: P) -> Self {
         let mut i18n = Localization::default();
         let decks_cache = DecksCache::default_decks_cache(&mut i18n);
+        let channels_cache = crate::channels::ChannelsCache::default_channels_cache(&mut i18n);
+        let relay_config = crate::relay_config::RelayConfig::default();
 
         let path = DataPath::new(&data_path);
         let imgcache_dir = path.path(DataPathType::Cache);
@@ -583,6 +612,8 @@ impl Damus {
             support,
             options,
             decks_cache,
+            channels_cache,
+            relay_config,
             unrecognized_args: BTreeSet::default(),
             jobs: JobsCache::default(),
             threads: Threads::default(),
