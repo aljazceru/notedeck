@@ -894,10 +894,14 @@ fn timelines_view(
 
     let mut can_take_drag_from = Vec::new();
 
+    // Check if a channel is selected to determine layout
+    let is_channel_selected = app.channels_cache.active_channels(ctx.accounts).selected_channel().is_some();
+    let content_cells = if is_channel_selected { 1 } else { num_cols };
+
     StripBuilder::new(ui)
         .size(Size::exact(CHANNEL_SIDEBAR_WIDTH))
         .size(Size::exact(ui::side_panel::SIDE_PANEL_WIDTH))
-        .sizes(sizes, num_cols)
+        .sizes(sizes, content_cells)
         .clip(true)
         .horizontal(|mut strip| {
             // Channel Sidebar
