@@ -12,7 +12,12 @@ use crate::{
     support::Support,
     timeline::{self, kind::ListKind, thread::Threads, TimelineCache, TimelineKind},
     toolbar::unseen_notification,
-    ui::{self, toolbar::toolbar, DesktopSidePanel, SidePanelAction},
+    ui::{
+        self,
+        channel_sidebar::CHANNEL_SIDEBAR_WIDTH,
+        toolbar::toolbar,
+        ChannelSidebar, ChannelSidebarAction, DesktopSidePanel, SidePanelAction,
+    },
     view_state::ViewState,
     Result,
 };
@@ -524,7 +529,7 @@ impl Damus {
         let threads = Threads::default();
 
         // Load or create channels cache
-        let channels_cache = if let Some(channels_cache) = crate::storage::load_channels_cache(
+        let mut channels_cache = if let Some(channels_cache) = crate::storage::load_channels_cache(
             app_context.path,
             app_context.i18n,
         ) {
@@ -534,6 +539,19 @@ impl Damus {
             info!("ChannelsCache: creating new with default channels");
             crate::channels::ChannelsCache::default_channels_cache(app_context.i18n)
         };
+
+        // Subscribe to all active channels to fetch data from relays
+        {
+            let active_channels = channels_cache.active_channels_mut(
+                app_context.i18n,
+                app_context.accounts,
+            );
+            active_channels.subscribe_all(
+                &mut subscriptions,
+                &mut timeline_cache,
+                app_context,
+            );
+        }
 
         // Load or create relay config
         let relay_config = if let Some(relay_config) = crate::storage::load_relay_config(
@@ -545,6 +563,16 @@ impl Damus {
             info!("RelayConfig: creating new with default relays");
             crate::relay_config::RelayConfig::default()
         };
+
+        // Apply relay config to pool - connect to configured relays
+        for relay_url in relay_config.get_relays() {
+            let wakeup = || {}; // Wakeup closure for relay events
+            if let Err(e) = app_context.pool.add_url(relay_url.clone(), wakeup) {
+                error!("Failed to add relay {}: {}", relay_url, e);
+            } else {
+                info!("Added relay from config: {}", relay_url);
+            }
+        }
 
         Self {
             subscriptions,
@@ -861,15 +889,38 @@ fn timelines_view(
 ) -> AppResponse {
     let num_cols = get_active_columns(ctx.accounts, &app.decks_cache).num_columns();
     let mut side_panel_action: Option<nav::SwitchingAction> = None;
+    let mut channel_sidebar_action: Option<ChannelSidebarAction> = None;
     let mut responses = Vec::with_capacity(num_cols);
 
     let mut can_take_drag_from = Vec::new();
 
     StripBuilder::new(ui)
+        .size(Size::exact(CHANNEL_SIDEBAR_WIDTH))
         .size(Size::exact(ui::side_panel::SIDE_PANEL_WIDTH))
         .sizes(sizes, num_cols)
         .clip(true)
         .horizontal(|mut strip| {
+            // Channel Sidebar
+            strip.cell(|ui| {
+                let rect = ui.available_rect_before_wrap();
+                let mut channel_sidebar =
+                    ChannelSidebar::new(&app.channels_cache, ctx.accounts, ctx.i18n);
+
+                if let Some(response) = channel_sidebar.show(ui) {
+                    if response.response.clicked() {
+                        channel_sidebar_action = Some(response.action);
+                    }
+                }
+
+                // vertical sidebar line
+                ui.painter().vline(
+                    rect.right(),
+                    rect.y_range(),
+                    ui.visuals().widgets.noninteractive.bg_stroke,
+                );
+            });
+
+            // Desktop Side Panel
             strip.cell(|ui| {
                 let rect = ui.available_rect_before_wrap();
                 let side_panel = DesktopSidePanel::new(
@@ -950,6 +1001,22 @@ fn timelines_view(
                 &mut app.subscriptions,
                 ui.ctx(),
             );
+    }
+
+    // process channel sidebar action
+    if let Some(action) = channel_sidebar_action {
+        match action {
+            ChannelSidebarAction::SelectChannel(idx) => {
+                app.channels_cache
+                    .active_channels_mut(ctx.i18n, ctx.accounts)
+                    .select_channel(idx);
+                // Save channel state after selection changes
+                storage::save_channels_cache(ctx.path, &app.channels_cache);
+            }
+            ChannelSidebarAction::AddChannel => {
+                // TODO: Show add channel dialog
+            }
+        }
     }
 
     let mut app_action: Option<AppAction> = None;

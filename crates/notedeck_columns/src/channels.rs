@@ -21,6 +21,7 @@ pub struct Channel {
     pub timeline_kind: TimelineKind,
     pub router: Router<Route>,
     pub unread_count: usize,
+    pub subscribed: bool,
 }
 
 impl Channel {
@@ -36,6 +37,7 @@ impl Channel {
             timeline_kind,
             router,
             unread_count: 0,
+            subscribed: false,
         }
     }
 
@@ -50,6 +52,7 @@ impl Channel {
             timeline_kind,
             router,
             unread_count: 0,
+            subscribed: false,
         }
     }
 
@@ -143,8 +146,13 @@ impl ChannelList {
     ) {
         let txn = Transaction::new(ctx.ndb).unwrap();
 
-        for channel in &self.channels {
-            if let Some(_result) = timeline_cache.open(
+        for channel in &mut self.channels {
+            // Skip if already subscribed
+            if channel.subscribed {
+                continue;
+            }
+
+            if let Some(result) = timeline_cache.open(
                 subs,
                 ctx.ndb,
                 ctx.note_cache,
@@ -152,7 +160,18 @@ impl ChannelList {
                 ctx.pool,
                 &channel.timeline_kind,
             ) {
-                // Process results if needed
+                // Process the result to handle unknown IDs and new notes
+                result.process(
+                    ctx.ndb,
+                    ctx.note_cache,
+                    &txn,
+                    timeline_cache,
+                    ctx.unknown_ids,
+                );
+
+                // Mark channel as subscribed
+                channel.subscribed = true;
+                info!("Subscribed to channel: {}", channel.name);
             }
         }
     }
@@ -164,9 +183,13 @@ impl ChannelList {
         ndb: &mut nostrdb::Ndb,
         pool: &mut enostr::RelayPool,
     ) {
-        for channel in &self.channels {
+        for channel in &mut self.channels {
             if let Err(err) = timeline_cache.pop(&channel.timeline_kind, ndb, pool) {
                 error!("Failed to unsubscribe from channel timeline: {err}");
+            } else {
+                // Mark channel as unsubscribed
+                channel.subscribed = false;
+                info!("Unsubscribed from channel: {}", channel.name);
             }
         }
     }

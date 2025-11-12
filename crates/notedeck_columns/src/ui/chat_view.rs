@@ -1,12 +1,12 @@
 use egui::{
-    vec2, Align, Color32, CursorIcon, Layout, Margin, Pos2, Rect, RichText, ScrollArea, Sense,
-    Stroke, TextStyle, Vec2,
+    vec2, Align, Color32, CursorIcon, Layout, Margin, RichText, ScrollArea, Sense,
+    Stroke,
 };
-use nostrdb::{Note, NoteKey, ProfileRecord, Transaction};
+use nostrdb::{Note, Transaction};
 use notedeck::fonts::get_font_size;
 use notedeck::name::get_display_name;
-use notedeck::{tr, JobsCache, Localization, Muted, NoteAction, NoteContext, NotedeckTextStyle};
-use notedeck_ui::{ProfilePic, ProfilePreview};
+use notedeck::{tr, JobsCache, NoteAction, NoteContext, NotedeckTextStyle};
+use notedeck_ui::ProfilePic;
 use tracing::warn;
 
 use crate::nav::BodyResponse;
@@ -48,11 +48,10 @@ impl<'a, 'd> ChatView<'a, 'd> {
     }
 
     pub fn ui(&mut self, ui: &mut egui::Ui) -> BodyResponse<Option<NoteAction>> {
-        let timeline = if let Some(tl) = self.timeline_cache.get_mut(self.timeline_id) {
-            tl
-        } else {
-            return BodyResponse::new(None);
-        };
+        // Check that timeline exists
+        if self.timeline_cache.get(self.timeline_id).is_none() {
+            return BodyResponse::none();
+        }
 
         let scroll_id = egui::Id::new(("chat_scroll", self.timeline_id, self.col));
 
@@ -65,7 +64,16 @@ impl<'a, 'd> ChatView<'a, 'd> {
             .auto_shrink([false, false])
             .show(ui, |ui| {
                 ui.with_layout(Layout::top_down(Align::Min), |ui| {
-                    let notes = timeline.notes(self.note_context.ndb);
+                    let units_len = {
+                        let timeline = if let Some(tl) = self.timeline_cache.get(self.timeline_id) {
+                            tl
+                        } else {
+                            warn!("Timeline missing in chat view");
+                            return;
+                        };
+                        timeline.current_view().units.len()
+                    };
+
                     let txn = if let Ok(txn) = Transaction::new(self.note_context.ndb) {
                         txn
                     } else {
@@ -73,7 +81,7 @@ impl<'a, 'd> ChatView<'a, 'd> {
                         return;
                     };
 
-                    if notes.is_empty() {
+                    if units_len == 0 {
                         // Empty state
                         ui.add_space(50.0);
                         ui.vertical_centered(|ui| {
@@ -102,8 +110,33 @@ impl<'a, 'd> ChatView<'a, 'd> {
                     let mut last_author: Option<Vec<u8>> = None;
                     let mut last_timestamp: u64 = 0;
 
-                    for note_key in notes {
-                        let note = if let Ok(note) = self.note_context.ndb.get_note_by_key(&txn, *note_key) {
+                    for i in 0..units_len {
+                        let note_key = {
+                            let timeline = if let Some(tl) = self.timeline_cache.get(self.timeline_id) {
+                                tl
+                            } else {
+                                continue;
+                            };
+
+                            let unit = if let Some(u) = timeline.current_view().units.get(i) {
+                                u
+                            } else {
+                                continue;
+                            };
+
+                            // Extract the note key from the unit
+                            match unit {
+                                crate::timeline::NoteUnit::Single(note_ref) => note_ref.key,
+                                crate::timeline::NoteUnit::Composite(composite) => {
+                                    match composite {
+                                        crate::timeline::CompositeUnit::Reaction(r) => r.note_reacted_to.key,
+                                        crate::timeline::CompositeUnit::Repost(r) => r.note_reposted.key,
+                                    }
+                                }
+                            }
+                        };
+
+                        let note = if let Ok(note) = self.note_context.ndb.get_note_by_key(&txn, note_key) {
                             note
                         } else {
                             continue;
@@ -141,7 +174,7 @@ impl<'a, 'd> ChatView<'a, 'd> {
                 });
             });
 
-        BodyResponse::new(note_action)
+        BodyResponse::output(Some(note_action))
     }
 
     fn render_message(
@@ -168,13 +201,15 @@ impl<'a, 'd> ChatView<'a, 'd> {
                             .ok();
 
                         let resp = ui.add(
-                            ProfilePic::new(self.jobs, note.pubkey())
-                                .size(AVATAR_SIZE)
-                                .profile(profile.as_ref().map(|p| p.record().profile())),
+                            &mut ProfilePic::from_profile_or_default(
+                                self.note_context.img_cache,
+                                profile.as_ref()
+                            )
+                            .size(AVATAR_SIZE)
                         );
 
                         if resp.clicked() {
-                            note_action = Some(NoteAction::Profile(note.pubkey().bytes_vec()));
+                            note_action = Some(NoteAction::Profile(enostr::Pubkey::new(*note.pubkey())));
                         }
                     } else {
                         // Just spacing for grouped messages
@@ -185,13 +220,8 @@ impl<'a, 'd> ChatView<'a, 'd> {
 
             // Message content column
             ui.with_layout(Layout::top_down(Align::Min), |ui| {
-                let max_rect = ui.max_rect();
-                let content_max_rect = Rect::from_min_size(
-                    max_rect.min,
-                    vec2(max_bubble_width, max_rect.height()),
-                );
-
-                ui.set_max_rect(content_max_rect);
+                // Constrain the content width for message bubbles
+                ui.set_max_width(max_bubble_width);
 
                 if show_header {
                     // Message header: name + timestamp
@@ -221,7 +251,7 @@ impl<'a, 'd> ChatView<'a, 'd> {
                 .get_profile_by_pubkey(txn, note.pubkey())
                 .ok();
 
-            let display_name = get_display_name(profile.as_ref().map(|p| p.record()));
+            let display_name = get_display_name(profile.as_ref());
 
             let name_response = ui.add(
                 egui::Label::new(
