@@ -50,6 +50,7 @@ pub struct Damus {
     pub decks_cache: DecksCache,
     pub channels_cache: crate::channels::ChannelsCache,
     pub relay_config: crate::relay_config::RelayConfig,
+    pub channel_dialog: ui::ChannelDialog,
     pub view_state: ViewState,
     pub drafts: Drafts,
     pub timeline_cache: TimelineCache,
@@ -399,6 +400,53 @@ fn render_damus(damus: &mut Damus, app_ctx: &mut AppContext<'_>, ui: &mut egui::
 
     fullscreen_media_viewer_ui(ui, &mut damus.view_state.media_viewer, app_ctx.img_cache);
 
+    // Show channel creation dialog
+    if let Some(dialog_action) = damus.channel_dialog.show(ui.ctx(), app_ctx.i18n) {
+        match dialog_action {
+            ui::ChannelDialogAction::Create { name, hashtags } => {
+                // Create new channel
+                let channel = crate::channels::Channel::new(name, hashtags);
+
+                // Add to active channels
+                damus
+                    .channels_cache
+                    .active_channels_mut(app_ctx.i18n, app_ctx.accounts)
+                    .add_channel(channel);
+
+                // Save channels cache
+                storage::save_channels_cache(app_ctx.path, &damus.channels_cache);
+
+                // Subscribe to the new channel
+                let txn = nostrdb::Transaction::new(app_ctx.ndb).unwrap();
+                let channel_count = damus.channels_cache.active_channels(app_ctx.accounts).num_channels();
+                if let Some(channel) = damus.channels_cache.active_channels_mut(app_ctx.i18n, app_ctx.accounts).get_channel_mut(channel_count - 1) {
+                    if !channel.subscribed {
+                        if let Some(result) = damus.timeline_cache.open(
+                            &mut damus.subscriptions,
+                            app_ctx.ndb,
+                            app_ctx.note_cache,
+                            &txn,
+                            app_ctx.pool,
+                            &channel.timeline_kind,
+                        ) {
+                            result.process(
+                                app_ctx.ndb,
+                                app_ctx.note_cache,
+                                &txn,
+                                &mut damus.timeline_cache,
+                                app_ctx.unknown_ids,
+                            );
+                            channel.subscribed = true;
+                        }
+                    }
+                }
+            }
+            ui::ChannelDialogAction::Cancel => {
+                // Dialog was canceled, nothing to do
+            }
+        }
+    }
+
     // We use this for keeping timestamps and things up to date
     //ui.ctx().request_repaint_after(Duration::from_secs(5));
 
@@ -587,6 +635,7 @@ impl Damus {
             decks_cache,
             channels_cache,
             relay_config,
+            channel_dialog: ui::ChannelDialog::default(),
             unrecognized_args,
             jobs,
             threads,
@@ -642,6 +691,7 @@ impl Damus {
             decks_cache,
             channels_cache,
             relay_config,
+            channel_dialog: ui::ChannelDialog::default(),
             unrecognized_args: BTreeSet::default(),
             jobs: JobsCache::default(),
             threads: Threads::default(),
@@ -1061,7 +1111,7 @@ fn timelines_view(
                 storage::save_channels_cache(ctx.path, &app.channels_cache);
             }
             ChannelSidebarAction::AddChannel => {
-                // TODO: Show add channel dialog
+                app.channel_dialog.open();
             }
         }
     }
