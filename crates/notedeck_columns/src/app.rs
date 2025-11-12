@@ -962,30 +962,73 @@ fn timelines_view(
                 );
             });
 
-            for col_index in 0..num_cols {
+            // Check if a channel is selected
+            let selected_channel = app.channels_cache.active_channels(ctx.accounts).selected_channel();
+
+            if let Some(channel) = selected_channel {
+                // Render ChatView for the selected channel
                 strip.cell(|ui| {
                     let rect = ui.available_rect_before_wrap();
                     let v_line_stroke = ui.visuals().widgets.noninteractive.bg_stroke;
-                    let inner_rect = {
-                        let mut inner = rect;
-                        inner.set_right(rect.right() - v_line_stroke.width);
-                        inner
+
+                    // Create a NoteContext from AppContext
+                    let mut note_context = notedeck::NoteContext {
+                        ndb: ctx.ndb,
+                        accounts: ctx.accounts,
+                        img_cache: ctx.img_cache,
+                        note_cache: ctx.note_cache,
+                        zaps: ctx.zaps,
+                        pool: ctx.pool,
+                        job_pool: ctx.job_pool,
+                        unknown_ids: ctx.unknown_ids,
+                        clipboard: ctx.clipboard,
+                        i18n: ctx.i18n,
+                        global_wallet: ctx.global_wallet,
                     };
-                    let resp = nav::render_nav(col_index, inner_rect, app, ctx, ui);
-                    can_take_drag_from.extend(resp.can_take_drag_from());
-                    responses.push(resp);
+
+                    // Create a ChatView for the selected channel
+                    let mut chat_view = crate::ui::ChatView::new(
+                        &channel.timeline_kind,
+                        &mut app.timeline_cache,
+                        &mut note_context,
+                        notedeck_ui::NoteOptions::default(),
+                        &mut app.jobs,
+                        0, // col index
+                    );
+
+                    let _chat_response = chat_view.ui(ui);
 
                     // vertical line
                     ui.painter()
                         .vline(rect.right(), rect.y_range(), v_line_stroke);
-
-                    // we need borrow ui context for processing, so proces
-                    // responses in the last cell
-
-                    if col_index == num_cols - 1 {}
                 });
+            } else {
+                // Normal column view when no channel is selected
+                for col_index in 0..num_cols {
+                    strip.cell(|ui| {
+                        let rect = ui.available_rect_before_wrap();
+                        let v_line_stroke = ui.visuals().widgets.noninteractive.bg_stroke;
+                        let inner_rect = {
+                            let mut inner = rect;
+                            inner.set_right(rect.right() - v_line_stroke.width);
+                            inner
+                        };
+                        let resp = nav::render_nav(col_index, inner_rect, app, ctx, ui);
+                        can_take_drag_from.extend(resp.can_take_drag_from());
+                        responses.push(resp);
 
-                //strip.cell(|ui| timeline::timeline_view(ui, app, timeline_ind));
+                        // vertical line
+                        ui.painter()
+                            .vline(rect.right(), rect.y_range(), v_line_stroke);
+
+                        // we need borrow ui context for processing, so proces
+                        // responses in the last cell
+
+                        if col_index == num_cols - 1 {}
+                    });
+
+                    //strip.cell(|ui| timeline::timeline_view(ui, app, timeline_ind));
+                }
             }
         });
 
