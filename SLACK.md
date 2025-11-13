@@ -65,28 +65,14 @@ Transform Notedeck from a TweetDeck-style multi-column interface to a modern Sla
 - Immediately subscribes to timeline and saves to disk
 
 #### 5. **Keyboard Shortcuts** (`d70f3d2`)
-- **Escape**: Close dialogs/panels (priority: thread panel → dialogs → switcher)
+- **Escape**: Close dialogs/panels (priority: thread panel → dialogs)
 - **Cmd/Ctrl+N**: Open channel creation dialog
-- **Cmd/Ctrl+K**: Open quick channel switcher
 
 **Implementation:**
 - Handled in `update_damus()` via `ctx.input()`
 - Priority system prevents conflicts (check `is_open` flags)
 
-#### 6. **Quick Channel Switcher** (`5c4ecb5`)
-- **`channel_switcher.rs`**: Cmd+K modal for fast navigation
-- Search/filter by channel name
-- Arrow key navigation (↑/↓)
-- Enter to select, Escape to close
-- Shows unread badges and highlights current channel
-
-**Why this way:**
-- Matches Slack's Cmd+K switcher UX pattern
-- Dark overlay focuses attention (semi-transparent background)
-- Keyboard-first navigation for power users
-- Search is simple string matching (could be enhanced with fuzzy search)
-
-#### 7. **Thread Side Panel** (`a9ce1b0`, `835b0ed`)
+#### 6. **Thread Side Panel** (`a9ce1b0`, `835b0ed`)
 - **`thread_panel.rs`**: 420px sliding panel from right
 - Wraps existing `ThreadView` component
 - Semi-transparent overlay on main content
@@ -98,7 +84,7 @@ Transform Notedeck from a TweetDeck-style multi-column interface to a modern Sla
 - **Event handling**: Thread opening triggers from ChatView actions
 - **No navigation**: Panel is overlay, doesn't change route (keeps channel visible)
 
-#### 8. **Action Handling** (`6cf9490`)
+#### 7. **Action Handling** (`6cf9490`)
 - **Reply**: Opens thread panel (compose reply in thread)
 - **Like/React**: Sends reaction event to relays via `send_reaction_event()`
 - **Repost**: Opens thread panel (could show repost dialog in future)
@@ -108,7 +94,7 @@ Transform Notedeck from a TweetDeck-style multi-column interface to a modern Sla
 - **Thread panel for replies**: Slack-style (reply in thread context)
 - **Immediate UI feedback**: Mark reaction as sent before relay confirmation
 
-#### 9. **ChatView Integration** (`a198391`, `352293b`)
+#### 8. **ChatView Integration** (`a198391`, `352293b`)
 - Conditional rendering in `timelines_view()`
 - When channel selected: render ChatView instead of columns
 - StripBuilder cell count adjustment (1 cell vs N columns)
@@ -168,7 +154,6 @@ User interacts or closes panel
 - `channels_cache: ChannelsCache` - All channels for all users
 - `relay_config: RelayConfig` - Global relay URLs
 - `channel_dialog: ChannelDialog` - Channel creation modal state
-- `channel_switcher: ChannelSwitcher` - Cmd+K switcher state
 - `thread_panel: ThreadPanel` - Thread side panel state
 
 **Persistence:**
@@ -266,7 +251,6 @@ crates/notedeck_columns/src/
 └── ui/
     ├── channel_sidebar.rs      # Left sidebar with channels
     ├── channel_dialog.rs       # Channel creation modal
-    ├── channel_switcher.rs     # Cmd+K quick switcher
     ├── chat_view.rs            # Message bubble rendering
     └── thread_panel.rs         # Thread side panel
 ```
@@ -361,13 +345,12 @@ if note.created_at() > channel.last_read {
 - Unsubscribe from timeline
 - Remove from storage
 
-#### 6. **Improved Search in Channel Switcher**
-**Current state:** Simple case-insensitive substring matching
-
-**Potential improvements:**
-- Fuzzy search (e.g., "btc" matches "bitcoin")
+#### 6. **Quick Channel Switcher** (REMOVED)
+**Note:** The Cmd+K quick channel switcher was removed per user request. If re-added in the future:
+- Implement with fuzzy search (e.g., "btc" matches "bitcoin")
 - Search in hashtags too, not just name
 - Recently used channels at top
+- Arrow key navigation
 
 #### 7. **Profile Clicking in ChatView**
 **Current state:** Clicking avatar/name does nothing
@@ -455,7 +438,6 @@ Track which messages have been seen by scrolling into view
 - [ ] Send like reaction on message (check relays receive it)
 - [ ] Open thread by clicking message
 - [ ] Close thread with X, Escape, overlay click
-- [ ] Use Cmd+K switcher to navigate channels
 - [ ] Use Cmd+N to create channel
 - [ ] Verify channels persist after app restart
 - [ ] Verify relays persist after app restart
@@ -511,8 +493,10 @@ None - existing test suite unchanged.
 
 ### Memory
 - **ChannelsCache**: O(users * channels) - typically small (1 user, 5-10 channels)
-- **ChatView**: Renders all messages in timeline (no virtualization yet)
-  - **Future**: Add virtual scrolling for large channels (1000+ messages)
+- **ChatView**: Renders all messages in timeline (no virtualization)
+  - **Virtualization Attempt (Reverted)**: Tried `egui_virtual_list::VirtualList` but oversimplified the rendering callback, which broke all Slack-like features (bubbles, avatars, names, timestamps, interaction buttons)
+  - **Current Implementation**: Full rendering loop works correctly but may have performance issues with 1000+ messages
+  - **Future Work**: Implement virtualization properly by calling `render_message()` inside VirtualList callback to preserve all features while gaining performance benefits
 
 ### Network
 - **Relay connections**: Shared across channels (efficient)
