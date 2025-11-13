@@ -144,7 +144,13 @@ impl ChannelList {
         timeline_cache: &mut TimelineCache,
         ctx: &mut AppContext,
     ) {
-        let txn = Transaction::new(ctx.ndb).unwrap();
+        let txn = match Transaction::new(ctx.ndb) {
+            Ok(txn) => txn,
+            Err(e) => {
+                error!("Failed to create transaction for channel subscription: {}", e);
+                return;
+            }
+        };
 
         for channel in &mut self.channels {
             // Skip if already subscribed
@@ -268,15 +274,19 @@ impl ChannelsCache {
     }
 
     pub fn fallback(&self) -> &ChannelList {
+        // SAFETY: fallback_pubkey is always initialized in ChannelsCache::new()
+        // and the entry is created in the constructor, so this should never fail
         self.account_to_channels
             .get(&self.fallback_pubkey)
-            .expect("fallback channel list not found")
+            .expect("fallback channel list not found - this is a bug in ChannelsCache initialization")
     }
 
     pub fn fallback_mut(&mut self) -> &mut ChannelList {
+        // SAFETY: fallback_pubkey is always initialized in ChannelsCache::new()
+        // and the entry is created in the constructor, so this should never fail
         self.account_to_channels
             .get_mut(&self.fallback_pubkey)
-            .expect("fallback channel list not found")
+            .expect("fallback channel list not found - this is a bug in ChannelsCache initialization")
     }
 
     pub fn add_channel_for_account(

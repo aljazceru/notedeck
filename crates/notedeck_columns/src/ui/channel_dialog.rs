@@ -71,9 +71,7 @@ impl ChannelDialog {
                     );
 
                     // Auto-focus on name field when opened
-                    if name_response.changed() {
-                        name_response.request_focus();
-                    }
+                    name_response.request_focus();
 
                     ui.add_space(16.0);
 
@@ -95,7 +93,7 @@ impl ChannelDialog {
                     );
                     ui.add_space(8.0);
 
-                    ui.add(
+                    let hashtags_response = ui.add(
                         TextEdit::multiline(&mut self.hashtags)
                             .hint_text(tr!(
                                 i18n,
@@ -106,14 +104,36 @@ impl ChannelDialog {
                             .desired_rows(3),
                     );
 
+                    // Handle Escape key to close dialog
+                    ui.input(|i| {
+                        if i.key_pressed(egui::Key::Escape) {
+                            action = Some(ChannelDialogAction::Cancel);
+                        }
+                        // Handle Enter key when name is focused
+                        if i.key_pressed(egui::Key::Enter) && !hashtags_response.has_focus() {
+                            if !self.name.trim().is_empty() {
+                                let hashtags: Vec<String> = self
+                                    .hashtags
+                                    .split(',')
+                                    .map(|s| s.trim().to_string())
+                                    .filter(|s| !s.is_empty())
+                                    .collect();
+
+                                action = Some(ChannelDialogAction::Create {
+                                    name: self.name.trim().to_string(),
+                                    hashtags,
+                                });
+                            }
+                        }
+                    });
+
                     ui.add_space(24.0);
 
                     // Buttons
                     ui.horizontal(|ui| {
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            // Create button
-                            let create_enabled = !self.name.trim().is_empty()
-                                && !self.hashtags.trim().is_empty();
+                            // Create button (hashtags are optional)
+                            let create_enabled = !self.name.trim().is_empty();
 
                             let create_button = egui::Button::new(
                                 RichText::new(tr!(i18n, "Create", "Button to create channel"))

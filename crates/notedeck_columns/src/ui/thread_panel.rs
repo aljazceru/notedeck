@@ -129,6 +129,7 @@ impl ThreadPanel {
 
                             // Thread content
                             if let Some(thread_id) = &self.selected_thread_id {
+                                // ThreadView will handle the case where thread doesn't exist
                                 let thread_resp = ThreadView::new(
                                     threads,
                                     thread_id,

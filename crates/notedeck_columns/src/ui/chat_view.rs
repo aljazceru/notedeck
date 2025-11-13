@@ -281,7 +281,7 @@ impl<'a, 'd> ChatView<'a, 'd> {
             }
 
             // Timestamp
-            let timestamp = format_timestamp(note.created_at());
+            let timestamp = format_timestamp(note.created_at(), self.note_context.i18n);
             ui.label(
                 RichText::new(timestamp)
                     .size(12.0)
@@ -463,26 +463,33 @@ impl<'a, 'd> ChatView<'a, 'd> {
 }
 
 /// Format timestamp as relative time (e.g., "5m ago", "2h ago", "Yesterday")
-fn format_timestamp(created_at: u64) -> String {
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_secs();
+fn format_timestamp(created_at: u64, i18n: &mut notedeck::Localization) -> String {
+    let now = match std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) {
+        Ok(duration) => duration.as_secs(),
+        Err(_) => {
+            // System time is before Unix epoch - extremely rare but handle gracefully
+            return tr!(i18n, "Unknown time", "Fallback when system time is invalid").to_string();
+        }
+    };
 
     let diff = now.saturating_sub(created_at);
 
     if diff < 60 {
-        "Just now".to_string()
+        tr!(i18n, "Just now", "Time less than 1 minute ago").to_string()
     } else if diff < 3600 {
-        format!("{}m ago", diff / 60)
+        let minutes = diff / 60;
+        format!("{minutes}m {}", tr!(i18n, "ago", "Time suffix"))
     } else if diff < 86400 {
-        format!("{}h ago", diff / 3600)
+        let hours = diff / 3600;
+        format!("{hours}h {}", tr!(i18n, "ago", "Time suffix"))
     } else if diff < 172800 {
-        "Yesterday".to_string()
+        tr!(i18n, "Yesterday", "One day ago").to_string()
     } else if diff < 604800 {
-        format!("{}d ago", diff / 86400)
+        let days = diff / 86400;
+        format!("{days}d {}", tr!(i18n, "ago", "Time suffix"))
     } else {
         // Simple date format without chrono dependency
-        format!("{} days ago", diff / 86400)
+        let days = diff / 86400;
+        format!("{} {} {}", days, tr!(i18n, "days", "Plural days"), tr!(i18n, "ago", "Time suffix"))
     }
 }

@@ -52,7 +52,6 @@ pub struct Damus {
     pub channels_cache: crate::channels::ChannelsCache,
     pub relay_config: crate::relay_config::RelayConfig,
     pub channel_dialog: ui::ChannelDialog,
-    pub channel_switcher: ui::ChannelSwitcher,
     pub thread_panel: ui::ThreadPanel,
     pub view_state: ViewState,
     pub drafts: Drafts,
@@ -229,21 +228,13 @@ fn update_damus(damus: &mut Damus, app_ctx: &mut AppContext<'_>, ctx: &egui::Con
                 damus.thread_panel.close();
             } else if damus.channel_dialog.is_open {
                 damus.channel_dialog.close();
-            } else if damus.channel_switcher.is_open {
-                damus.channel_switcher.close();
             }
         }
 
         // Cmd+N / Ctrl+N to open new channel dialog
         let cmd_n = (i.modifiers.command || i.modifiers.ctrl) && i.key_pressed(egui::Key::N);
-        if cmd_n && !damus.channel_dialog.is_open && !damus.channel_switcher.is_open && !damus.thread_panel.is_open {
+        if cmd_n && !damus.channel_dialog.is_open && !damus.thread_panel.is_open {
             damus.channel_dialog.open();
-        }
-
-        // Cmd+K / Ctrl+K to open channel switcher
-        let cmd_k = (i.modifiers.command || i.modifiers.ctrl) && i.key_pressed(egui::Key::K);
-        if cmd_k && !damus.channel_dialog.is_open && !damus.channel_switcher.is_open && !damus.thread_panel.is_open {
-            damus.channel_switcher.open();
         }
     });
 
@@ -446,7 +437,13 @@ fn render_damus(damus: &mut Damus, app_ctx: &mut AppContext<'_>, ui: &mut egui::
                 storage::save_channels_cache(app_ctx.path, &damus.channels_cache);
 
                 // Subscribe to the new channel
-                let txn = nostrdb::Transaction::new(app_ctx.ndb).unwrap();
+                let txn = match nostrdb::Transaction::new(app_ctx.ndb) {
+                    Ok(txn) => txn,
+                    Err(e) => {
+                        error!("Failed to create transaction for channel subscription: {}", e);
+                        return app_resp;
+                    }
+                };
                 let channel_count = damus.channels_cache.active_channels(app_ctx.accounts).num_channels();
                 if let Some(channel) = damus.channels_cache.active_channels_mut(app_ctx.i18n, app_ctx.accounts).get_channel_mut(channel_count - 1) {
                     if !channel.subscribed {
@@ -472,30 +469,6 @@ fn render_damus(damus: &mut Damus, app_ctx: &mut AppContext<'_>, ui: &mut egui::
             }
             ui::ChannelDialogAction::Cancel => {
                 // Dialog was canceled, nothing to do
-            }
-        }
-    }
-
-    // Show channel switcher (Cmd+K)
-    if let Some(switcher_action) = damus.channel_switcher.show(
-        ui.ctx(),
-        app_ctx.i18n,
-        &damus.channels_cache,
-        app_ctx.accounts,
-    ) {
-        match switcher_action {
-            ui::ChannelSwitcherAction::SelectChannel(idx) => {
-                // Select the channel
-                damus
-                    .channels_cache
-                    .active_channels_mut(app_ctx.i18n, app_ctx.accounts)
-                    .select_channel(idx);
-
-                // Save channel state
-                storage::save_channels_cache(app_ctx.path, &damus.channels_cache);
-            }
-            ui::ChannelSwitcherAction::Close => {
-                // Switcher was closed, nothing to do
             }
         }
     }
@@ -730,7 +703,6 @@ impl Damus {
             channels_cache,
             relay_config,
             channel_dialog: ui::ChannelDialog::default(),
-            channel_switcher: ui::ChannelSwitcher::default(),
             thread_panel: ui::ThreadPanel::default(),
             unrecognized_args,
             jobs,
@@ -788,7 +760,6 @@ impl Damus {
             channels_cache,
             relay_config,
             channel_dialog: ui::ChannelDialog::default(),
-            channel_switcher: ui::ChannelSwitcher::default(),
             thread_panel: ui::ThreadPanel::default(),
             unrecognized_args: BTreeSet::default(),
             jobs: JobsCache::default(),
@@ -1029,6 +1000,64 @@ fn render_damus_desktop(
     }
 }
 
+/// Process chat view actions like Reply, React, Repost
+fn process_chat_action(
+    action: NoteAction,
+    app: &mut Damus,
+    ctx: &mut AppContext<'_>,
+    ui: &mut egui::Ui,
+) {
+    match action {
+        NoteAction::Note { note_id, .. } => {
+            // Open thread panel for viewing threads
+            app.thread_panel.open(*note_id.bytes());
+        }
+        NoteAction::Reply(note_id) => {
+            // Open thread panel for replying
+            app.thread_panel.open(*note_id.bytes());
+        }
+        NoteAction::React(react_action) => {
+            // Handle reaction (like) - send to relays
+            if let Some(filled) = ctx.accounts.selected_filled() {
+                let txn = match Transaction::new(ctx.ndb) {
+                    Ok(txn) => txn,
+                    Err(e) => {
+                        error!("Failed to create transaction for reaction: {}", e);
+                        return;
+                    }
+                };
+
+                // Send reaction event using existing infrastructure
+                if let Err(err) = crate::actionbar::send_reaction_event(
+                    ctx.ndb,
+                    &txn,
+                    ctx.pool,
+                    filled,
+                    &react_action,
+                ) {
+                    error!("Failed to send reaction: {err}");
+                } else {
+                    // Mark reaction as sent in UI
+                    ui.ctx().data_mut(|d| {
+                        use notedeck::note::reaction_sent_id;
+                        d.insert_temp(
+                            reaction_sent_id(&filled.pubkey, react_action.note_id.bytes()),
+                            true,
+                        )
+                    });
+                }
+            }
+        }
+        NoteAction::Repost(note_id) => {
+            // For now, open thread panel - could add repost dialog later
+            app.thread_panel.open(*note_id.bytes());
+        }
+        _ => {
+            // Other actions not yet supported in chat view
+        }
+    }
+}
+
 fn timelines_view(
     ui: &mut egui::Ui,
     sizes: Size,
@@ -1115,9 +1144,13 @@ fn timelines_view(
             });
 
             // Check if a channel is selected
-            let selected_channel = app.channels_cache.active_channels(ctx.accounts).selected_channel();
+            // Clone the timeline_kind to avoid borrowing app across the closure
+            let selected_timeline_kind = app.channels_cache
+                .active_channels(ctx.accounts)
+                .selected_channel()
+                .map(|c| c.timeline_kind.clone());
 
-            if let Some(channel) = selected_channel {
+            if let Some(timeline_kind) = selected_timeline_kind {
                 // Render ChatView for the selected channel
                 strip.cell(|ui| {
                     let rect = ui.available_rect_before_wrap();
@@ -1140,7 +1173,7 @@ fn timelines_view(
 
                     // Create a ChatView for the selected channel
                     let mut chat_view = crate::ui::ChatView::new(
-                        &channel.timeline_kind,
+                        &timeline_kind,
                         &mut app.timeline_cache,
                         &mut note_context,
                         notedeck_ui::NoteOptions::default(),
@@ -1152,49 +1185,7 @@ fn timelines_view(
 
                     // Handle chat view actions
                     if let Some(Some(action)) = chat_response.output {
-                        match action {
-                            NoteAction::Note { note_id, .. } => {
-                                // Open thread panel for viewing threads
-                                app.thread_panel.open(*note_id.bytes());
-                            }
-                            NoteAction::Reply(note_id) => {
-                                // Open thread panel for replying
-                                app.thread_panel.open(*note_id.bytes());
-                            }
-                            NoteAction::React(react_action) => {
-                                // Handle reaction (like) - send to relays
-                                if let Some(filled) = ctx.accounts.selected_filled() {
-                                    let txn = Transaction::new(ctx.ndb).expect("txn for reaction");
-
-                                    // Send reaction event using existing infrastructure
-                                    if let Err(err) = crate::actionbar::send_reaction_event(
-                                        ctx.ndb,
-                                        &txn,
-                                        ctx.pool,
-                                        filled,
-                                        &react_action,
-                                    ) {
-                                        error!("Failed to send reaction: {err}");
-                                    } else {
-                                        // Mark reaction as sent in UI
-                                        ui.ctx().data_mut(|d| {
-                                            use notedeck::note::reaction_sent_id;
-                                            d.insert_temp(
-                                                reaction_sent_id(&filled.pubkey, react_action.note_id.bytes()),
-                                                true,
-                                            )
-                                        });
-                                    }
-                                }
-                            }
-                            NoteAction::Repost(note_id) => {
-                                // For now, open thread panel - could add repost dialog later
-                                app.thread_panel.open(*note_id.bytes());
-                            }
-                            _ => {
-                                // Other actions not yet supported in chat view
-                            }
-                        }
+                        process_chat_action(action, app, ctx, ui);
                     }
 
                     // vertical line
