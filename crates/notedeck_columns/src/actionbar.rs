@@ -282,7 +282,7 @@ pub fn execute_and_process_note_action(
     resp.router_action
 }
 
-fn send_reaction_event(
+pub fn send_reaction_event(
     ndb: &mut Ndb,
     txn: &Transaction,
     pool: &mut RelayPool,

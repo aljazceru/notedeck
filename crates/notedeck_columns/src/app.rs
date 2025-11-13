@@ -1150,10 +1150,51 @@ fn timelines_view(
 
                     let chat_response = chat_view.ui(ui);
 
-                    // Handle chat view actions (e.g., opening threads)
-                    if let Some(Some(NoteAction::Note { note_id, .. })) = chat_response.output {
-                        // Open thread panel instead of navigating
-                        app.thread_panel.open(*note_id.bytes());
+                    // Handle chat view actions
+                    if let Some(Some(action)) = chat_response.output {
+                        match action {
+                            NoteAction::Note { note_id, .. } => {
+                                // Open thread panel for viewing threads
+                                app.thread_panel.open(*note_id.bytes());
+                            }
+                            NoteAction::Reply(note_id) => {
+                                // Open thread panel for replying
+                                app.thread_panel.open(*note_id.bytes());
+                            }
+                            NoteAction::React(react_action) => {
+                                // Handle reaction (like) - send to relays
+                                if let Some(filled) = ctx.accounts.selected_filled() {
+                                    let txn = Transaction::new(ctx.ndb).expect("txn for reaction");
+
+                                    // Send reaction event using existing infrastructure
+                                    if let Err(err) = crate::actionbar::send_reaction_event(
+                                        ctx.ndb,
+                                        &txn,
+                                        ctx.pool,
+                                        filled,
+                                        &react_action,
+                                    ) {
+                                        error!("Failed to send reaction: {err}");
+                                    } else {
+                                        // Mark reaction as sent in UI
+                                        ui.ctx().data_mut(|d| {
+                                            use notedeck::note::reaction_sent_id;
+                                            d.insert_temp(
+                                                reaction_sent_id(&filled.pubkey, react_action.note_id.bytes()),
+                                                true,
+                                            )
+                                        });
+                                    }
+                                }
+                            }
+                            NoteAction::Repost(note_id) => {
+                                // For now, open thread panel - could add repost dialog later
+                                app.thread_panel.open(*note_id.bytes());
+                            }
+                            _ => {
+                                // Other actions not yet supported in chat view
+                            }
+                        }
                     }
 
                     // vertical line
