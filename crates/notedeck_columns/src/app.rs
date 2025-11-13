@@ -52,6 +52,7 @@ pub struct Damus {
     pub relay_config: crate::relay_config::RelayConfig,
     pub channel_dialog: ui::ChannelDialog,
     pub channel_switcher: ui::ChannelSwitcher,
+    pub thread_panel: ui::ThreadPanel,
     pub view_state: ViewState,
     pub drafts: Drafts,
     pub timeline_cache: TimelineCache,
@@ -221,9 +222,11 @@ fn update_damus(damus: &mut Damus, app_ctx: &mut AppContext<'_>, ctx: &egui::Con
 
     // Handle keyboard shortcuts
     ctx.input(|i| {
-        // Escape to close dialogs
+        // Escape to close dialogs and panels
         if i.key_pressed(egui::Key::Escape) {
-            if damus.channel_dialog.is_open {
+            if damus.thread_panel.is_open {
+                damus.thread_panel.close();
+            } else if damus.channel_dialog.is_open {
                 damus.channel_dialog.close();
             } else if damus.channel_switcher.is_open {
                 damus.channel_switcher.close();
@@ -232,13 +235,13 @@ fn update_damus(damus: &mut Damus, app_ctx: &mut AppContext<'_>, ctx: &egui::Con
 
         // Cmd+N / Ctrl+N to open new channel dialog
         let cmd_n = (i.modifiers.command || i.modifiers.ctrl) && i.key_pressed(egui::Key::N);
-        if cmd_n && !damus.channel_dialog.is_open && !damus.channel_switcher.is_open {
+        if cmd_n && !damus.channel_dialog.is_open && !damus.channel_switcher.is_open && !damus.thread_panel.is_open {
             damus.channel_dialog.open();
         }
 
         // Cmd+K / Ctrl+K to open channel switcher
         let cmd_k = (i.modifiers.command || i.modifiers.ctrl) && i.key_pressed(egui::Key::K);
-        if cmd_k && !damus.channel_dialog.is_open && !damus.channel_switcher.is_open {
+        if cmd_k && !damus.channel_dialog.is_open && !damus.channel_switcher.is_open && !damus.thread_panel.is_open {
             damus.channel_switcher.open();
         }
     });
@@ -686,6 +689,7 @@ impl Damus {
             relay_config,
             channel_dialog: ui::ChannelDialog::default(),
             channel_switcher: ui::ChannelSwitcher::default(),
+            thread_panel: ui::ThreadPanel::default(),
             unrecognized_args,
             jobs,
             threads,
@@ -743,6 +747,7 @@ impl Damus {
             relay_config,
             channel_dialog: ui::ChannelDialog::default(),
             channel_switcher: ui::ChannelSwitcher::default(),
+            thread_panel: ui::ThreadPanel::default(),
             unrecognized_args: BTreeSet::default(),
             jobs: JobsCache::default(),
             threads: Threads::default(),
