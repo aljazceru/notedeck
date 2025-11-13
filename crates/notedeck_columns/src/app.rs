@@ -446,7 +446,8 @@ fn render_damus(damus: &mut Damus, app_ctx: &mut AppContext<'_>, ui: &mut egui::
                 };
                 let channel_count = damus.channels_cache.active_channels(app_ctx.accounts).num_channels();
                 if let Some(channel) = damus.channels_cache.active_channels_mut(app_ctx.i18n, app_ctx.accounts).get_channel_mut(channel_count - 1) {
-                    if !channel.subscribed {
+                    // Check if timeline is already open (query TimelineCache directly)
+                    if damus.timeline_cache.get(&channel.timeline_kind).is_none() {
                         if let Some(result) = damus.timeline_cache.open(
                             &mut damus.subscriptions,
                             app_ctx.ndb,
@@ -462,7 +463,6 @@ fn render_damus(damus: &mut Damus, app_ctx: &mut AppContext<'_>, ui: &mut egui::
                                 &mut damus.timeline_cache,
                                 app_ctx.unknown_ids,
                             );
-                            channel.subscribed = true;
                         }
                     }
                 }
@@ -1036,16 +1036,9 @@ fn process_chat_action(
                     &react_action,
                 ) {
                     error!("Failed to send reaction: {err}");
-                } else {
-                    // Mark reaction as sent in UI
-                    ui.ctx().data_mut(|d| {
-                        use notedeck::note::reaction_sent_id;
-                        d.insert_temp(
-                            reaction_sent_id(&filled.pubkey, react_action.note_id.bytes()),
-                            true,
-                        )
-                    });
                 }
+                // Note: Reaction state is now queried from nostrdb directly,
+                // no need to track in temp state
             }
         }
         NoteAction::Repost(note_id) => {

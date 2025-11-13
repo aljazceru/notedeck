@@ -21,7 +21,7 @@ pub struct Channel {
     pub timeline_kind: TimelineKind,
     pub router: Router<Route>,
     pub unread_count: usize,
-    pub subscribed: bool,
+    // Note: subscribed state is tracked by TimelineCache, not here
 }
 
 impl Channel {
@@ -37,7 +37,6 @@ impl Channel {
             timeline_kind,
             router,
             unread_count: 0,
-            subscribed: false,
         }
     }
 
@@ -52,7 +51,6 @@ impl Channel {
             timeline_kind,
             router,
             unread_count: 0,
-            subscribed: false,
         }
     }
 
@@ -153,8 +151,8 @@ impl ChannelList {
         };
 
         for channel in &mut self.channels {
-            // Skip if already subscribed
-            if channel.subscribed {
+            // Skip if already subscribed (check TimelineCache directly)
+            if timeline_cache.get(&channel.timeline_kind).is_some() {
                 continue;
             }
 
@@ -175,8 +173,6 @@ impl ChannelList {
                     ctx.unknown_ids,
                 );
 
-                // Mark channel as subscribed
-                channel.subscribed = true;
                 info!("Subscribed to channel: {}", channel.name);
             }
         }
@@ -193,8 +189,6 @@ impl ChannelList {
             if let Err(err) = timeline_cache.pop(&channel.timeline_kind, ndb, pool) {
                 error!("Failed to unsubscribe from channel timeline: {err}");
             } else {
-                // Mark channel as unsubscribed
-                channel.subscribed = false;
                 info!("Unsubscribed from channel: {}", channel.name);
             }
         }

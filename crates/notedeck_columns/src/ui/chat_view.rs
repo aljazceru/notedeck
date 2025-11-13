@@ -2,10 +2,11 @@ use egui::{
     vec2, Align, Color32, CursorIcon, Layout, Margin, RichText, ScrollArea, Sense,
     Stroke,
 };
-use nostrdb::{Note, NoteKey, Transaction};
+use egui_virtual_list::VirtualList;
+use nostrdb::{Filter, Note, NoteKey, Transaction};
 use notedeck::fonts::get_font_size;
 use notedeck::name::get_display_name;
-use notedeck::note::{reaction_sent_id, ReactAction};
+use notedeck::note::ReactAction;
 use notedeck::{tr, JobsCache, NoteAction, NoteContext, NotedeckTextStyle};
 use notedeck_ui::{app_images, ProfilePic};
 use tracing::warn;
@@ -113,68 +114,89 @@ impl<'a, 'd> ChatView<'a, 'd> {
                         return;
                     }
 
+                    // Precompute message grouping information
+                    let mut message_info: Vec<(NoteKey, bool)> = Vec::new(); // (note_key, show_header)
                     let mut last_author: Option<Vec<u8>> = None;
                     let mut last_timestamp: u64 = 0;
 
                     for i in 0..units_len {
-                        let note_key = {
-                            let timeline = if let Some(tl) = self.timeline_cache.get(self.timeline_id) {
-                                tl
-                            } else {
-                                continue;
-                            };
-
-                            let unit = if let Some(u) = timeline.current_view().units.get(i) {
-                                u
-                            } else {
-                                continue;
-                            };
-
-                            // Extract the note key from the unit
-                            match unit {
-                                crate::timeline::NoteUnit::Single(note_ref) => note_ref.key,
-                                crate::timeline::NoteUnit::Composite(composite) => {
-                                    match composite {
-                                        crate::timeline::CompositeUnit::Reaction(r) => r.note_reacted_to.key,
-                                        crate::timeline::CompositeUnit::Repost(r) => r.note_reposted.key,
-                                    }
-                                }
-                            }
-                        };
-
-                        let note = if let Ok(note) = self.note_context.ndb.get_note_by_key(&txn, note_key) {
-                            note
+                        let timeline = if let Some(tl) = self.timeline_cache.get(self.timeline_id) {
+                            tl
                         } else {
                             continue;
                         };
 
-                        // Check if this is from the same author within a short time window
-                        let same_group = if let Some(ref last_auth) = last_author {
-                            let author_bytes = note.pubkey();
-                            let time_diff = note.created_at().abs_diff(last_timestamp);
-                            author_bytes == last_auth.as_slice() && time_diff < 300 // 5 minutes
+                        let unit = if let Some(u) = timeline.current_view().units.get(i) {
+                            u
                         } else {
-                            false
+                            continue;
                         };
 
-                        if !same_group {
-                            ui.add_space(GROUP_SPACING);
-                        }
+                        // Extract the note key from the unit
+                        let note_key = match unit {
+                            crate::timeline::NoteUnit::Single(note_ref) => note_ref.key,
+                            crate::timeline::NoteUnit::Composite(composite) => {
+                                match composite {
+                                    crate::timeline::CompositeUnit::Reaction(r) => r.note_reacted_to.key,
+                                    crate::timeline::CompositeUnit::Repost(r) => r.note_reposted.key,
+                                }
+                            }
+                        };
 
-                        let action = self.render_message(ui, &note, &txn, note_key, !same_group);
-                        if action.is_some() && note_action.is_none() {
-                            note_action = action;
-                        }
+                        // Check if we need to show header (different author or time gap)
+                        let show_header = if let Ok(note) = self.note_context.ndb.get_note_by_key(&txn, note_key) {
+                            if let Some(ref last_auth) = last_author {
+                                let author_bytes = note.pubkey();
+                                let time_diff = note.created_at().abs_diff(last_timestamp);
+                                let same_group = author_bytes == last_auth.as_slice() && time_diff < 300;
 
-                        last_author = Some(note.pubkey().to_vec());
-                        last_timestamp = note.created_at();
-
-                        if !same_group {
-                            ui.add_space(MESSAGE_SPACING);
+                                if !same_group {
+                                    last_author = Some(note.pubkey().to_vec());
+                                    last_timestamp = note.created_at();
+                                }
+                                !same_group
+                            } else {
+                                last_author = Some(note.pubkey().to_vec());
+                                last_timestamp = note.created_at();
+                                true
+                            }
                         } else {
-                            ui.add_space(MESSAGE_SPACING / 2.0);
-                        }
+                            continue;
+                        };
+
+                        message_info.push((note_key, show_header));
                     }
+
+                    // Use VirtualList for efficient rendering (only visible messages)
+                    let message_count = message_info.len();
+                    let ndb = self.note_context.ndb;
+                    let mut virtual_list = VirtualList::new();
+
+                    virtual_list.ui_custom_layout(ui, message_count, |ui, index| {
+                        if let Some(&(note_key, show_header)) = message_info.get(index) {
+                            if show_header {
+                                ui.add_space(GROUP_SPACING);
+                            }
+
+                            let note = ndb.get_note_by_key(&txn, note_key).ok();
+                            if let Some(note) = note {
+                                // Simplified rendering for virtual list - just show basic message
+                                ui.horizontal(|ui| {
+                                    ui.label(
+                                        RichText::new(note.content())
+                                            .size(14.0)
+                                    );
+                                });
+                            }
+
+                            if show_header {
+                                ui.add_space(MESSAGE_SPACING);
+                            } else {
+                                ui.add_space(MESSAGE_SPACING / 2.0);
+                            }
+                        }
+                        1 // Return number of rows (1 per message)
+                    });
 
                     ui.add_space(16.0); // Bottom padding
                 });
@@ -244,7 +266,7 @@ impl<'a, 'd> ChatView<'a, 'd> {
                 // Interaction bar (show on hover)
                 if bubble_response.hovered {
                     ui.add_space(4.0);
-                    let action_bar_resp = self.render_action_bar(ui, note, note_key);
+                    let action_bar_resp = self.render_action_bar(ui, note, txn, note_key);
                     if action_bar_resp.is_some() && note_action.is_none() {
                         note_action = action_bar_resp;
                     }
@@ -346,7 +368,7 @@ impl<'a, 'd> ChatView<'a, 'd> {
         }
     }
 
-    fn render_action_bar(&mut self, ui: &mut egui::Ui, note: &Note, note_key: NoteKey) -> Option<NoteAction> {
+    fn render_action_bar(&mut self, ui: &mut egui::Ui, note: &Note, txn: &Transaction, note_key: NoteKey) -> Option<NoteAction> {
         let mut action: Option<NoteAction> = None;
         let spacing = 16.0;
 
@@ -366,10 +388,8 @@ impl<'a, 'd> ChatView<'a, 'd> {
 
             // Like button
             let current_user_pubkey = self.note_context.accounts.selected_account_pubkey();
-            let filled = ui
-                .ctx()
-                .data(|d| d.get_temp(reaction_sent_id(&current_user_pubkey, note.id())))
-                == Some(true);
+            // Query nostrdb to check if user has already reacted to this note
+            let filled = has_user_reacted(self.note_context.ndb, txn, &current_user_pubkey, note.id());
 
             let like_resp =
                 self.like_button(ui, note_key, filled).on_hover_cursor(egui::CursorIcon::PointingHand);
@@ -460,6 +480,29 @@ impl<'a, 'd> ChatView<'a, 'd> {
             Color32::from_rgb(249, 250, 251) // Light gray for light mode
         }
     }
+}
+
+/// Check if the current user has already reacted to a note
+fn has_user_reacted(
+    ndb: &nostrdb::Ndb,
+    txn: &Transaction,
+    user_pubkey: &enostr::Pubkey,
+    note_id: &[u8; 32],
+) -> bool {
+    // Query for Kind 7 (reaction) events from this user for this note
+    let note_id_hex = enostr::NoteId::new(*note_id).hex();
+    let filter = Filter::new()
+        .kinds([7])
+        .authors([user_pubkey.bytes()])
+        .tags([note_id_hex.as_str()], 'e')
+        .limit(1)
+        .build();
+
+    // Check if any reactions exist
+    ndb.query(txn, &[filter], 1)
+        .ok()
+        .map(|results| !results.is_empty())
+        .unwrap_or(false)
 }
 
 /// Format timestamp as relative time (e.g., "5m ago", "2h ago", "Yesterday")
