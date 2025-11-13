@@ -26,7 +26,8 @@ use enostr::{ClientMessage, PoolRelay, Pubkey, RelayEvent, RelayMessage, RelayPo
 use nostrdb::Transaction;
 use notedeck::{
     tr, ui::is_narrow, Accounts, AppAction, AppContext, AppResponse, DataPath, DataPathType,
-    FilterState, Images, JobsCache, Localization, NotedeckOptions, SettingsHandler, UnknownIds,
+    FilterState, Images, JobsCache, Localization, NoteAction, NotedeckOptions, SettingsHandler,
+    UnknownIds,
 };
 use notedeck_ui::{
     media::{MediaViewer, MediaViewerFlags, MediaViewerState},
@@ -496,6 +497,47 @@ fn render_damus(damus: &mut Damus, app_ctx: &mut AppContext<'_>, ui: &mut egui::
             ui::ChannelSwitcherAction::Close => {
                 // Switcher was closed, nothing to do
             }
+        }
+    }
+
+    // Show thread panel if open
+    if damus.thread_panel.is_open {
+        let mut note_context = notedeck::NoteContext {
+            ndb: app_ctx.ndb,
+            accounts: app_ctx.accounts,
+            img_cache: app_ctx.img_cache,
+            note_cache: app_ctx.note_cache,
+            zaps: app_ctx.zaps,
+            pool: app_ctx.pool,
+            job_pool: app_ctx.job_pool,
+            unknown_ids: app_ctx.unknown_ids,
+            clipboard: app_ctx.clipboard,
+            i18n: app_ctx.i18n,
+            global_wallet: app_ctx.global_wallet,
+        };
+
+        let (panel_action, note_action) = damus.thread_panel.show(
+            ui,
+            &mut damus.threads,
+            damus.note_options,
+            &mut note_context,
+            &mut damus.jobs,
+            0, // col index for thread panel
+        );
+
+        if let Some(action) = panel_action {
+            match action {
+                ui::ThreadPanelAction::Close => {
+                    damus.thread_panel.close();
+                }
+            }
+        }
+
+        // Handle any note actions from the thread panel
+        // (e.g., opening another thread, replying, etc.)
+        if let Some(_note_action) = note_action {
+            // For now, we can ignore note actions within the thread panel
+            // In a full implementation, these would be handled by the action system
         }
     }
 
@@ -1106,7 +1148,13 @@ fn timelines_view(
                         0, // col index
                     );
 
-                    let _chat_response = chat_view.ui(ui);
+                    let chat_response = chat_view.ui(ui);
+
+                    // Handle chat view actions (e.g., opening threads)
+                    if let Some(Some(NoteAction::Note { note_id, .. })) = chat_response.output {
+                        // Open thread panel instead of navigating
+                        app.thread_panel.open(*note_id.bytes());
+                    }
 
                     // vertical line
                     ui.painter()
