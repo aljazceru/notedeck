@@ -2,11 +2,12 @@ use egui::{
     vec2, Align, Color32, CursorIcon, Layout, Margin, RichText, ScrollArea, Sense,
     Stroke,
 };
-use nostrdb::{Note, Transaction};
+use nostrdb::{Note, NoteKey, Transaction};
 use notedeck::fonts::get_font_size;
 use notedeck::name::get_display_name;
+use notedeck::note::{reaction_sent_id, ReactAction};
 use notedeck::{tr, JobsCache, NoteAction, NoteContext, NotedeckTextStyle};
-use notedeck_ui::ProfilePic;
+use notedeck_ui::{app_images, ProfilePic};
 use tracing::warn;
 
 use crate::nav::BodyResponse;
@@ -18,6 +19,11 @@ const MESSAGE_SPACING: f32 = 8.0;
 const GROUP_SPACING: f32 = 16.0;
 const AVATAR_SIZE: f32 = 36.0;
 const MAX_BUBBLE_WIDTH_RATIO: f32 = 0.75; // 75% of available width
+
+struct MessageBubbleResponse {
+    action: Option<NoteAction>,
+    hovered: bool,
+}
 
 pub struct ChatView<'a, 'd> {
     timeline_id: &'a TimelineKind,
@@ -155,7 +161,7 @@ impl<'a, 'd> ChatView<'a, 'd> {
                             ui.add_space(GROUP_SPACING);
                         }
 
-                        let action = self.render_message(ui, &note, &txn, !same_group);
+                        let action = self.render_message(ui, &note, &txn, note_key, !same_group);
                         if action.is_some() && note_action.is_none() {
                             note_action = action;
                         }
@@ -182,6 +188,7 @@ impl<'a, 'd> ChatView<'a, 'd> {
         ui: &mut egui::Ui,
         note: &Note,
         txn: &Transaction,
+        note_key: NoteKey,
         show_header: bool,
     ) -> Option<NoteAction> {
         let mut note_action: Option<NoteAction> = None;
@@ -229,13 +236,19 @@ impl<'a, 'd> ChatView<'a, 'd> {
                 }
 
                 // Message bubble
-                let bubble_action = self.render_message_bubble(ui, note, txn);
-                if bubble_action.is_some() && note_action.is_none() {
-                    note_action = bubble_action;
+                let bubble_response = self.render_message_bubble(ui, note, txn);
+                if bubble_response.action.is_some() && note_action.is_none() {
+                    note_action = bubble_response.action;
                 }
 
-                // Interaction bar (hover only)
-                // TODO: Add like/reply/repost buttons on hover
+                // Interaction bar (show on hover)
+                if bubble_response.hovered {
+                    ui.add_space(4.0);
+                    let action_bar_resp = self.render_action_bar(ui, note, note_key);
+                    if action_bar_resp.is_some() && note_action.is_none() {
+                        note_action = action_bar_resp;
+                    }
+                }
             });
         });
 
@@ -284,7 +297,7 @@ impl<'a, 'd> ChatView<'a, 'd> {
         ui: &mut egui::Ui,
         note: &Note,
         _txn: &Transaction,
-    ) -> Option<NoteAction> {
+    ) -> MessageBubbleResponse {
         let mut note_action: Option<NoteAction> = None;
 
         let frame = egui::Frame::new()
@@ -320,12 +333,124 @@ impl<'a, 'd> ChatView<'a, 'd> {
             note_action = Some(NoteAction::note(NoteId::new(*note.id())));
         }
 
+        let hovered = response.hovered();
+
         // Hover effect
-        if response.hovered() {
+        if hovered {
             ui.ctx().set_cursor_icon(CursorIcon::PointingHand);
         }
 
-        note_action
+        MessageBubbleResponse {
+            action: note_action,
+            hovered,
+        }
+    }
+
+    fn render_action_bar(&mut self, ui: &mut egui::Ui, note: &Note, note_key: NoteKey) -> Option<NoteAction> {
+        let mut action: Option<NoteAction> = None;
+        let spacing = 16.0;
+
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 2.0;
+            ui.set_min_height(24.0);
+
+            // Reply button
+            let reply_resp =
+                self.reply_button(ui, note_key).on_hover_cursor(egui::CursorIcon::PointingHand);
+
+            if reply_resp.clicked() {
+                action = Some(NoteAction::Reply(enostr::NoteId::new(*note.id())));
+            }
+
+            ui.add_space(spacing);
+
+            // Like button
+            let current_user_pubkey = self.note_context.accounts.selected_account_pubkey();
+            let filled = ui
+                .ctx()
+                .data(|d| d.get_temp(reaction_sent_id(&current_user_pubkey, note.id())))
+                == Some(true);
+
+            let like_resp =
+                self.like_button(ui, note_key, filled).on_hover_cursor(egui::CursorIcon::PointingHand);
+
+            if like_resp.clicked() {
+                action = Some(NoteAction::React(ReactAction {
+                    note_id: enostr::NoteId::new(*note.id()),
+                    content: "+",
+                }));
+            }
+
+            ui.add_space(spacing);
+
+            // Repost button
+            let repost_resp =
+                self.repost_button(ui, note_key).on_hover_cursor(egui::CursorIcon::PointingHand);
+
+            if repost_resp.clicked() {
+                action = Some(NoteAction::Repost(enostr::NoteId::new(*note.id())));
+            }
+        });
+
+        action
+    }
+
+    fn reply_button(&mut self, ui: &mut egui::Ui, _note_key: NoteKey) -> egui::Response {
+        let img = if ui.style().visuals.dark_mode {
+            app_images::reply_dark_image()
+        } else {
+            app_images::reply_light_image()
+        };
+
+        ui.add(img.max_width(18.0).sense(Sense::click()))
+            .on_hover_text(tr!(
+                self.note_context.i18n,
+                "Reply to this note",
+                "Hover text for reply button"
+            ))
+    }
+
+    fn like_button(
+        &mut self,
+        ui: &mut egui::Ui,
+        _note_key: NoteKey,
+        filled: bool,
+    ) -> egui::Response {
+        let img = {
+            let img = if filled {
+                app_images::like_image_filled()
+            } else {
+                app_images::like_image()
+            };
+
+            if ui.visuals().dark_mode {
+                img.tint(ui.visuals().text_color())
+            } else {
+                img
+            }
+        };
+
+        ui.add(img.max_width(18.0).sense(Sense::click()))
+            .on_hover_text(tr!(
+                self.note_context.i18n,
+                "Like this note",
+                "Hover text for like button"
+            ))
+    }
+
+    fn repost_button(&mut self, ui: &mut egui::Ui, _note_key: NoteKey) -> egui::Response {
+        let img = if ui.style().visuals.dark_mode {
+            app_images::repost_dark_image()
+        } else {
+            app_images::repost_light_image()
+        };
+
+        ui.add(img.max_width(18.0).sense(Sense::click()))
+            .on_hover_text(tr!(
+                self.note_context.i18n,
+                "Repost this note",
+                "Hover text for repost button"
+            ))
     }
 
     fn get_bubble_color(&self, ui: &egui::Ui) -> Color32 {
