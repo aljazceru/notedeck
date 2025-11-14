@@ -1,5 +1,5 @@
 use egui::{
-    vec2, Color32, CursorIcon, InnerResponse, Margin, Rect, RichText, ScrollArea,
+    vec2, Color32, CursorIcon, Margin, Rect, RichText, ScrollArea,
     Separator, Stroke, TextStyle, Widget,
 };
 
@@ -20,6 +20,8 @@ pub struct ChannelSidebar<'a> {
 pub enum ChannelSidebarAction {
     SelectChannel(usize),
     AddChannel,
+    DeleteChannel(usize),
+    EditChannel(usize),
 }
 
 pub struct ChannelSidebarResponse {
@@ -88,26 +90,32 @@ impl<'a> ChannelSidebar<'a> {
             let scroll_response = ScrollArea::vertical()
                 .id_salt("channel_list")
                 .show(ui, |ui| {
-                    let mut selected_response = None;
+                    let mut selected_action = None;
 
                     for (index, channel) in channel_list.channels.iter().enumerate() {
                         let is_selected = index == selected_index;
-                        let resp = channel_item(ui, &channel.name, is_selected, channel.unread_count);
+                        let resp = channel_item(ui, &channel.name, is_selected, channel.unread_count, channel_list.num_channels(), index, self.i18n);
 
-                        if resp.clicked() {
-                            selected_response = Some(InnerResponse::new(
-                                ChannelSidebarAction::SelectChannel(index),
-                                resp,
-                            ));
+                        match resp {
+                            ChannelItemResponse::Select => {
+                                selected_action = Some(ChannelSidebarAction::SelectChannel(index));
+                            }
+                            ChannelItemResponse::Delete => {
+                                selected_action = Some(ChannelSidebarAction::DeleteChannel(index));
+                            }
+                            ChannelItemResponse::Edit => {
+                                selected_action = Some(ChannelSidebarAction::EditChannel(index));
+                            }
+                            ChannelItemResponse::None => {}
                         }
                     }
 
-                    selected_response
+                    selected_action
                 })
                 .inner;
 
-            if scroll_response.is_some() {
-                return scroll_response;
+            if let Some(action) = scroll_response {
+                return Some(action);
             }
 
             ui.add_space(8.0);
@@ -116,17 +124,27 @@ impl<'a> ChannelSidebar<'a> {
             let add_channel_resp = ui.add(add_channel_button(self.i18n));
 
             if add_channel_resp.clicked() {
-                Some(InnerResponse::new(
-                    ChannelSidebarAction::AddChannel,
-                    add_channel_resp,
-                ))
+                Some(ChannelSidebarAction::AddChannel)
             } else {
                 None
             }
         })
         .inner
-        .map(|inner| ChannelSidebarResponse::new(inner.inner, inner.response))
+        .map(|action| {
+            // We need to create a dummy response for ChannelSidebarResponse
+            // Use the UI's interact_rect to create a valid response
+            let dummy_rect = ui.available_rect_before_wrap();
+            let dummy_response = ui.interact(dummy_rect, ui.id().with("channel_sidebar"), egui::Sense::hover());
+            ChannelSidebarResponse::new(action, dummy_response)
+        })
     }
+}
+
+enum ChannelItemResponse {
+    Select,
+    Delete,
+    Edit,
+    None,
 }
 
 fn channel_item(
@@ -134,10 +152,15 @@ fn channel_item(
     name: &str,
     is_selected: bool,
     unread_count: usize,
-) -> egui::Response {
+    total_channels: usize,
+    _channel_index: usize,
+    i18n: &mut Localization,
+) -> ChannelItemResponse {
     let desired_size = vec2(ui.available_width(), 36.0);
 
     let (rect, response) = ui.allocate_exact_size(desired_size, egui::Sense::click());
+
+    let mut action = ChannelItemResponse::None;
 
     if ui.is_rect_visible(rect) {
         let visuals = ui.style().interact(&response);
@@ -169,7 +192,7 @@ fn channel_item(
         }
 
         // Draw hashtag icon
-        let icon_rect = Rect::from_min_size(
+        let icon_rect = egui::Rect::from_min_size(
             rect.min + vec2(8.0, rect.height() / 2.0 - 8.0),
             vec2(16.0, 16.0),
         );
@@ -177,12 +200,12 @@ fn channel_item(
             icon_rect.center(),
             egui::Align2::CENTER_CENTER,
             "#",
-            TextStyle::Body.resolve(ui.style()),
+            egui::TextStyle::Body.resolve(ui.style()),
             visuals.text_color(),
         );
 
         // Draw channel name
-        let text_rect = Rect::from_min_size(
+        let text_rect = egui::Rect::from_min_size(
             rect.min + vec2(32.0, 0.0),
             vec2(rect.width() - 64.0, rect.height()),
         );
@@ -200,7 +223,7 @@ fn channel_item(
             text_rect.left_center(),
             egui::Align2::LEFT_CENTER,
             name,
-            TextStyle::Body.resolve(ui.style()),
+            egui::TextStyle::Body.resolve(ui.style()),
             text_color,
         );
 
@@ -213,7 +236,7 @@ fn channel_item(
             };
 
             let badge_size = vec2(24.0, 18.0);
-            let badge_rect = Rect::from_min_size(
+            let badge_rect = egui::Rect::from_min_size(
                 rect.max - vec2(badge_size.x + 8.0, rect.height() / 2.0 + badge_size.y / 2.0),
                 badge_size,
             );
@@ -230,13 +253,34 @@ fn channel_item(
                 badge_rect.center(),
                 egui::Align2::CENTER_CENTER,
                 &badge_text,
-                TextStyle::Small.resolve(ui.style()),
+                egui::TextStyle::Small.resolve(ui.style()),
                 Color32::WHITE,
             );
         }
     }
 
-    response.on_hover_cursor(CursorIcon::PointingHand)
+    // Handle clicks
+    if response.clicked() {
+        action = ChannelItemResponse::Select;
+    }
+
+    // Show context menu on right-click
+    response.context_menu(|ui| {
+        if ui.button(tr!(i18n, "Edit Channel", "Context menu option to edit channel")).clicked() {
+            action = ChannelItemResponse::Edit;
+            ui.close_menu();
+        }
+
+        // Only allow delete if not the last channel
+        if total_channels > 1 {
+            if ui.button(tr!(i18n, "Delete Channel", "Context menu option to delete channel")).clicked() {
+                action = ChannelItemResponse::Delete;
+                ui.close_menu();
+            }
+        }
+    });
+
+    action
 }
 
 fn add_channel_button(i18n: &mut Localization) -> impl Widget + '_ {

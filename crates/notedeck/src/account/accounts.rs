@@ -352,6 +352,11 @@ impl Accounts {
     pub fn get_subs(&self) -> &AccountSubs {
         &self.subs
     }
+
+    /// Check if a subscription ID belongs to any account subscription
+    pub fn is_account_sub(&self, subid: &str) -> bool {
+        self.subs.is_account_sub(subid)
+    }
 }
 
 enum AccType<'a> {
@@ -503,6 +508,11 @@ impl AccountSubs {
         unsubscribe(ndb, pool, &self.contacts);
 
         *self = AccountSubs::new(ndb, pool, relay_defaults, pk, new_selection_data, wakeup);
+    }
+
+    /// Check if a subscription ID belongs to any of the account subscriptions
+    pub fn is_account_sub(&self, subid: &str) -> bool {
+        self.relay.remote == subid || self.mute.remote == subid || self.contacts.remote == subid
     }
 }
 
