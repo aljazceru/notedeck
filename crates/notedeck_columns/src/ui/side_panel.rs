@@ -5,6 +5,7 @@ use egui::{
 use tracing::{error, info};
 
 use crate::{
+    accounts::AccountsRoute,
     app::{get_active_columns_mut, get_decks_mut},
     app_style::DECK_ICON_SIZE,
     decks::{DecksAction, DecksCache},
@@ -26,6 +27,7 @@ static ICON_WIDTH: f32 = 40.0;
 pub struct DesktopSidePanel<'a> {
     selected_account: &'a UserAccount,
     decks_cache: &'a DecksCache,
+    accounts: &'a Accounts,
     i18n: &'a mut Localization,
 }
 
@@ -45,6 +47,8 @@ pub enum SidePanelAction {
     SwitchDeck(usize),
     EditDeck(usize),
     Wallet,
+    Account,  // Use existing Account instead of UserAccount
+    Settings,
 }
 
 pub struct SidePanelResponse {
@@ -62,11 +66,13 @@ impl<'a> DesktopSidePanel<'a> {
     pub fn new(
         selected_account: &'a UserAccount,
         decks_cache: &'a DecksCache,
+        accounts: &'a Accounts,
         i18n: &'a mut Localization,
     ) -> Self {
         Self {
             selected_account,
             decks_cache,
+            accounts,
             i18n,
         }
     }
@@ -95,6 +101,20 @@ impl<'a> DesktopSidePanel<'a> {
         let inner = ui
             .vertical(|ui| {
                 ui.with_layout(Layout::top_down(egui::Align::Center), |ui| {
+                    // User controls section
+                    ui.add_space(4.0);
+
+                    // User profile button
+                    let user_account_resp = ui.add(user_account_button(&self.selected_account, dark_mode));
+
+                    // Add account button if no account or for switching
+                    let add_account_resp = ui.add(add_account_button(dark_mode));
+
+                    // Relay configuration button
+                    let relay_resp = ui.add(relay_button(dark_mode));
+
+                    ui.add(Separator::default().horizontal().spacing(8.0).shrink(4.0));
+
                     // macos needs a bit of space to make room for window
                     // minimize/close buttons
                     //if cfg!(target_os = "macos") {
@@ -136,7 +156,19 @@ impl<'a> DesktopSidePanel<'a> {
                             expand_resp,
                         ))
                     */
-                    if compose_resp.clicked() {
+                    if user_account_resp.clicked() {
+                        Some(InnerResponse::new(
+                            SidePanelAction::Account,
+                            user_account_resp,
+                        ))
+                    } else if add_account_resp.clicked() {
+                        Some(InnerResponse::new(
+                            SidePanelAction::Account, // Reuse Account for adding account
+                            add_account_resp,
+                        ))
+                    } else if relay_resp.clicked() {
+                        Some(InnerResponse::new(SidePanelAction::Settings, relay_resp))
+                    } else if compose_resp.clicked() {
                         Some(InnerResponse::new(
                             SidePanelAction::ComposeNote,
                             compose_resp,
@@ -190,8 +222,6 @@ impl<'a> DesktopSidePanel<'a> {
         let router = get_active_columns_mut(i18n, accounts, decks_cache).get_selected_router();
         let mut switching_response = None;
         match action {
-            /*
-            SidePanelAction::Panel => {} // TODO
             SidePanelAction::Account => {
                 if router
                     .routes()
@@ -206,21 +236,12 @@ impl<'a> DesktopSidePanel<'a> {
             }
             SidePanelAction::Settings => {
                 if router.routes().iter().any(|r| r == &Route::Relays) {
-                    // return if we are already routing to accounts
+                    // return if we are already routing to relays
                     router.go_back();
                 } else {
                     router.route_to(Route::relays());
                 }
             }
-            SidePanelAction::Support => {
-                if router.routes().iter().any(|r| r == &Route::Support) {
-                    router.go_back();
-                } else {
-                    support.refresh();
-                    router.route_to(Route::Support);
-                }
-            }
-            */
             SidePanelAction::Columns => {
                 if router
                     .routes()
@@ -444,4 +465,97 @@ fn show_decks<'a>(
         resp = resp.union(deck_icon_resp);
     }
     InnerResponse::new(clicked_index, resp)
+}
+
+fn user_account_button(user_account: &UserAccount, dark_mode: bool) -> impl Widget + '_ {
+    move |ui: &mut egui::Ui| -> egui::Response {
+        let max_size = ICON_WIDTH * ICON_EXPANSION_MULTIPLE;
+        let helper = AnimationHelper::new(ui, "user-account-button", vec2(max_size, max_size));
+
+        // Show user icon if logged in, otherwise show login icon
+        let img = if user_account.key.secret_key.is_some() {
+            // User is logged in - show user/home icon
+            if dark_mode {
+                app_images::home_dark_image()
+            } else {
+                app_images::home_light_image()
+            }
+        } else {
+            // No user logged in - show login icon
+            if dark_mode {
+                app_images::link_dark_image()
+            } else {
+                app_images::link_light_image()
+            }
+        };
+
+        let cur_img_size = helper.scale_1d_pos(ICON_WIDTH - 8.0); // Slightly smaller
+        img.paint_at(
+            ui,
+            helper
+                .get_animation_rect()
+                .shrink((max_size - cur_img_size) / 2.0),
+        );
+
+        helper
+            .take_animation_response()
+            .on_hover_cursor(CursorIcon::PointingHand)
+            .on_hover_text(if user_account.key.secret_key.is_some() {
+                "User Account"
+            } else {
+                "Login / Create Account"
+            })
+    }
+}
+
+fn add_account_button(dark_mode: bool) -> impl Widget {
+    move |ui: &mut egui::Ui| -> egui::Response {
+        let max_size = ICON_WIDTH * ICON_EXPANSION_MULTIPLE;
+        let helper = AnimationHelper::new(ui, "add-account-button", vec2(max_size, max_size));
+
+        let img = if dark_mode {
+            app_images::add_column_dark_image()
+        } else {
+            app_images::add_column_light_image()
+        };
+
+        let cur_img_size = helper.scale_1d_pos(ICON_WIDTH - 12.0);
+        img.paint_at(
+            ui,
+            helper
+                .get_animation_rect()
+                .shrink((max_size - cur_img_size) / 2.0),
+        );
+
+        helper
+            .take_animation_response()
+            .on_hover_cursor(CursorIcon::PointingHand)
+            .on_hover_text("Add Account")
+    }
+}
+
+fn relay_button(dark_mode: bool) -> impl Widget {
+    move |ui: &mut egui::Ui| -> egui::Response {
+        let max_size = ICON_WIDTH * ICON_EXPANSION_MULTIPLE;
+        let helper = AnimationHelper::new(ui, "relay-button", vec2(max_size, max_size));
+
+        let img = if dark_mode {
+            app_images::reply_dark_image()
+        } else {
+            app_images::reply_light_image()
+        };
+
+        let cur_img_size = helper.scale_1d_pos(ICON_WIDTH - 10.0);
+        img.paint_at(
+            ui,
+            helper
+                .get_animation_rect()
+                .shrink((max_size - cur_img_size) / 2.0),
+        );
+
+        helper
+            .take_animation_response()
+            .on_hover_cursor(CursorIcon::PointingHand)
+            .on_hover_text("Relay Configuration")
+    }
 }
