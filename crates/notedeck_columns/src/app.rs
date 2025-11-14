@@ -1155,10 +1155,17 @@ fn timelines_view(
 
     let mut can_take_drag_from = Vec::new();
 
-    // Check if a channel is selected to determine layout
-    let is_channel_selected = app.channels_cache.active_channels(ctx.accounts).selected_channel().is_some();
+    // Check if a channel is selected AND we should show it (not overridden by router views)
+    let has_selected_channel = app.channels_cache.active_channels(ctx.accounts).selected_channel().is_some();
+    let router = get_active_columns_mut(ctx.i18n, ctx.accounts, &mut app.decks_cache).get_selected_router();
+    let has_router_view = router.routes().iter().any(|route| {
+        matches!(route, Route::Accounts(_) | Route::Relays | Route::AddColumn(_) | Route::ComposeNote | Route::Search | Route::NewDeck | Route::EditDeck(_))
+    });
 
-    if is_channel_selected {
+    // Only use channel layout if a channel is selected AND we're not showing a router view
+    let show_channel_layout = has_selected_channel && !has_router_view;
+
+    if show_channel_layout {
         // When channel is selected: Side Panel | Channel Sidebar | Content Area (remainder)
         StripBuilder::new(ui)
             .size(Size::exact(ui::side_panel::SIDE_PANEL_WIDTH))
@@ -1172,7 +1179,6 @@ fn timelines_view(
                 let side_panel = DesktopSidePanel::new(
                     ctx.accounts.get_selected_account(),
                     &app.decks_cache,
-                    ctx.accounts,
                     ctx.i18n,
                 )
                 .show(ui);
@@ -1227,49 +1233,13 @@ fn timelines_view(
                 );
             });
 
-            // Check if a channel is selected and if we need to show other views first
+            // Render ChatView for the selected channel
             let selected_timeline_kind = app.channels_cache
                 .active_channels(ctx.accounts)
                 .selected_channel()
                 .map(|c| c.timeline_kind.clone());
 
-            // Check if we need to show other views (Accounts, Relays, etc.) instead of channel
-            let router = get_active_columns_mut(ctx.i18n, ctx.accounts, &mut app.decks_cache).get_selected_router();
-            let should_override_channel = router.routes().iter().any(|route| {
-                matches!(route, Route::Accounts(_) | Route::Relays | Route::AddColumn(_) | Route::ComposeNote | Route::Search | Route::NewDeck | Route::EditDeck(_))
-            });
-
-            // Debug: Check the override condition
-            if should_override_channel {
-                println!("DEBUG: Overriding channel view, routes count: {}", router.routes().len());
-            } else {
-                println!("DEBUG: Not overriding channel view, routes count: {}", router.routes().len());
-            }
-
-            if should_override_channel {
-                // Render router-based views (Accounts, Relays, etc.)
-                strip.cell(|ui| {
-                    let rect = ui.available_rect_before_wrap();
-                    let v_line_stroke = ui.visuals().widgets.noninteractive.bg_stroke;
-                    let inner_rect = {
-                        let mut inner = rect;
-                        inner.set_right(rect.right() - v_line_stroke.width);
-                        inner
-                    };
-
-                    // Render navigation for the router views
-                    println!("DEBUG: Calling nav::render_nav for column 0");
-                    let resp = nav::render_nav(0, inner_rect, app, ctx, ui);
-                    println!("DEBUG: nav::render_nav completed, responses: {}", responses.len());
-                    can_take_drag_from.extend(resp.can_take_drag_from());
-                    responses.push(resp);
-
-                    // vertical line
-                    ui.painter()
-                        .vline(rect.right(), rect.y_range(), v_line_stroke);
-                });
-            } else if let Some(timeline_kind) = selected_timeline_kind {
-                // Render ChatView for the selected channel
+            if let Some(timeline_kind) = selected_timeline_kind {
                 strip.cell(|ui| {
                     let rect = ui.available_rect_before_wrap();
                     let v_line_stroke = ui.visuals().widgets.noninteractive.bg_stroke;
@@ -1353,7 +1323,6 @@ fn timelines_view(
                     let side_panel = DesktopSidePanel::new(
                         ctx.accounts.get_selected_account(),
                         &app.decks_cache,
-                        ctx.accounts,
                         ctx.i18n,
                     )
                     .show(ui);

@@ -27,7 +27,6 @@ static ICON_WIDTH: f32 = 40.0;
 pub struct DesktopSidePanel<'a> {
     selected_account: &'a UserAccount,
     decks_cache: &'a DecksCache,
-    accounts: &'a Accounts,
     i18n: &'a mut Localization,
 }
 
@@ -66,13 +65,11 @@ impl<'a> DesktopSidePanel<'a> {
     pub fn new(
         selected_account: &'a UserAccount,
         decks_cache: &'a DecksCache,
-        accounts: &'a Accounts,
         i18n: &'a mut Localization,
     ) -> Self {
         Self {
             selected_account,
             decks_cache,
-            accounts,
             i18n,
         }
     }
