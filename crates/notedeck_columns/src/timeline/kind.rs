@@ -515,7 +515,7 @@ impl TimelineKind {
             }
 
             TimelineKind::Hashtag(hashtag) => {
-                let filters = hashtag
+                let mut filters: Vec<Filter> = hashtag
                     .iter()
                     .filter(|tag| !tag.is_empty())
                     .map(|tag| {
@@ -525,7 +525,17 @@ impl TimelineKind {
                             .tags([tag.to_lowercase().as_str()], 't')
                             .build()
                     })
-                    .collect::<Vec<_>>();
+                    .collect();
+
+                // If no valid hashtags were provided, show all notes
+                if filters.is_empty() {
+                    filters.push(
+                        Filter::new()
+                            .kinds([1])
+                            .limit(filter::default_limit())
+                            .build()
+                    );
+                }
 
                 FilterState::ready(filters)
             }

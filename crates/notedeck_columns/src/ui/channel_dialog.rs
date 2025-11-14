@@ -6,6 +6,7 @@ pub struct ChannelDialog {
     pub name: String,
     pub hashtags: String,
     pub is_open: bool,
+    pub focus_requested: bool,
 }
 
 pub enum ChannelDialogAction {
@@ -19,6 +20,7 @@ impl ChannelDialog {
             name: String::new(),
             hashtags: String::new(),
             is_open: false,
+            focus_requested: false,
         }
     }
 
@@ -26,6 +28,7 @@ impl ChannelDialog {
         self.is_open = true;
         self.name.clear();
         self.hashtags.clear();
+        self.focus_requested = false;
     }
 
     pub fn close(&mut self) {
@@ -70,8 +73,11 @@ impl ChannelDialog {
                             .desired_width(f32::INFINITY),
                     );
 
-                    // Auto-focus on name field when opened
-                    name_response.request_focus();
+                    // Auto-focus on name field when first opened
+                    if !self.focus_requested {
+                        name_response.request_focus();
+                        self.focus_requested = true;
+                    }
 
                     ui.add_space(16.0);
 
