@@ -1050,6 +1050,20 @@ pub fn render_nav(
 ) -> RenderNavResponse {
     let narrow = is_narrow(ui.ctx());
 
+    // Prevent navigation layer conflicts during first-time setup
+    let selected_account = ctx.accounts.get_selected_account();
+    let account_count = ctx.accounts.cache.into_iter().count();
+    if selected_account.key.pubkey == notedeck::FALLBACK_PUBKEY() && account_count <= 1 {
+        // Return minimal navigation response to avoid layer conflicts
+        let routes = vec![Route::add_account()];
+        let nav = Nav::new(&routes).id_source(egui::Id::new(("minimal_nav", col)));
+        let nav_response = nav.show(ui, |_, _, _| RouteResponse {
+          response: None,
+          can_take_drag_from: Vec::new(),
+      });
+        return RenderNavResponse::new(col, NotedeckNavResponse::Nav(Box::new(nav_response)));
+    }
+
     if let Some(sheet_route) = app
         .columns(ctx.accounts)
         .column(col)
@@ -1073,7 +1087,7 @@ pub fn render_nav(
             .cloned();
         if let Some(bg_route) = bg_route {
             let resp = PopupSheet::new(&bg_route, &sheet_route)
-                .id_source(egui::Id::new(("nav", col)))
+                .id_source(egui::Id::new(("popup_sheet_nav", col)))
                 .navigating(navigating)
                 .returning(returning)
                 .with_split(split)
@@ -1104,7 +1118,7 @@ pub fn render_nav(
         .router()
         .routes()
         .clone();
-    let nav = Nav::new(&routes).id_source(egui::Id::new(("nav", col)));
+    let nav = Nav::new(&routes).id_source(egui::Id::new(("main_nav", col)));
 
     let nav_response = nav
         .navigating(

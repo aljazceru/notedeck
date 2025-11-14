@@ -64,7 +64,7 @@ impl RelayConfig {
 
 impl Default for RelayConfig {
     fn default() -> Self {
-        Self::new()
+        Self::default_relays()
     }
 }
 

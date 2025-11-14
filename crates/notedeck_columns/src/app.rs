@@ -754,7 +754,7 @@ impl Damus {
             info!("RelayConfig: loading from disk");
             relay_config
         } else {
-            info!("RelayConfig: creating new empty config (no relays)");
+            info!("RelayConfig: creating new config with default relays");
             crate::relay_config::RelayConfig::default()
         };
 
@@ -903,6 +903,7 @@ fn render_damus_mobile(
     app_ctx: &mut AppContext<'_>,
     ui: &mut egui::Ui,
 ) -> AppResponse {
+
     //let routes = app.timelines[0].routes.clone();
 
     let mut can_take_drag_from = Vec::new();
@@ -1058,12 +1059,21 @@ fn render_damus_desktop(
     app_ctx: &mut AppContext<'_>,
     ui: &mut egui::Ui,
 ) -> AppResponse {
+
+    let num_cols = get_active_columns(app_ctx.accounts, &app.decks_cache).num_columns();
     let screen_size = ui.ctx().screen_rect().width();
-    let calc_panel_width = (screen_size
-        / get_active_columns(app_ctx.accounts, &app.decks_cache).num_columns() as f32)
-        - 30.0;
+    let sidebar_width = ui::side_panel::SIDE_PANEL_WIDTH + CHANNEL_SIDEBAR_WIDTH;
+    let available_width = screen_size - sidebar_width;
+
+    // Check if we need horizontal scrolling for the content area
+    let calc_panel_width = if num_cols > 0 {
+        available_width / num_cols as f32
+    } else {
+        available_width
+    } - 30.0;
+
     let min_width = 320.0;
-    let need_scroll = calc_panel_width < min_width;
+    let need_scroll = num_cols > 1 && calc_panel_width < min_width;
     let panel_sizes = if need_scroll {
         Size::exact(min_width)
     } else {
@@ -1086,7 +1096,7 @@ fn process_chat_action(
     action: NoteAction,
     app: &mut Damus,
     ctx: &mut AppContext<'_>,
-    ui: &mut egui::Ui,
+    _ui: &mut egui::Ui,
 ) {
     match action {
         NoteAction::Note { note_id, .. } => {
@@ -1147,32 +1157,15 @@ fn timelines_view(
 
     // Check if a channel is selected to determine layout
     let is_channel_selected = app.channels_cache.active_channels(ctx.accounts).selected_channel().is_some();
-    let content_cells = if is_channel_selected { 1 } else { num_cols };
 
-    StripBuilder::new(ui)
-        .size(Size::exact(CHANNEL_SIDEBAR_WIDTH))
-        .size(Size::exact(ui::side_panel::SIDE_PANEL_WIDTH))
-        .sizes(sizes, content_cells)
-        .clip(true)
-        .horizontal(|mut strip| {
-            // Channel Sidebar
-            strip.cell(|ui| {
-                let rect = ui.available_rect_before_wrap();
-                let mut channel_sidebar =
-                    ChannelSidebar::new(&app.channels_cache, ctx.accounts, ctx.i18n);
-
-                if let Some(response) = channel_sidebar.show(ui) {
-                    channel_sidebar_action = Some(response.action);
-                }
-
-                // vertical sidebar line
-                ui.painter().vline(
-                    rect.right(),
-                    rect.y_range(),
-                    ui.visuals().widgets.noninteractive.bg_stroke,
-                );
-            });
-
+    if is_channel_selected {
+        // When channel is selected: Side Panel | Channel Sidebar | Content Area (remainder)
+        StripBuilder::new(ui)
+            .size(Size::exact(ui::side_panel::SIDE_PANEL_WIDTH))
+            .size(Size::exact(CHANNEL_SIDEBAR_WIDTH))
+            .size(Size::remainder())
+            .clip(true)
+            .horizontal(|mut strip| {
             // Desktop Side Panel
             strip.cell(|ui| {
                 let rect = ui.available_rect_before_wrap();
@@ -1206,6 +1199,24 @@ fn timelines_view(
                     egui::StrokeKind::Inside,
                 );
                 */
+
+                // vertical sidebar line
+                ui.painter().vline(
+                    rect.right(),
+                    rect.y_range(),
+                    ui.visuals().widgets.noninteractive.bg_stroke,
+                );
+            });
+
+            // Channel Sidebar
+            strip.cell(|ui| {
+                let rect = ui.available_rect_before_wrap();
+                let mut channel_sidebar =
+                    ChannelSidebar::new(&app.channels_cache, ctx.accounts, ctx.i18n);
+
+                if let Some(response) = channel_sidebar.show(ui) {
+                    channel_sidebar_action = Some(response.action);
+                }
 
                 // vertical sidebar line
                 ui.painter().vline(
@@ -1293,6 +1304,89 @@ fn timelines_view(
                 }
             }
         });
+    } else {
+        // When no channel is selected: Side Panel | Channel Sidebar | Multiple Columns
+        StripBuilder::new(ui)
+            .size(Size::exact(ui::side_panel::SIDE_PANEL_WIDTH))
+            .size(Size::exact(CHANNEL_SIDEBAR_WIDTH))
+            .sizes(sizes, num_cols)
+            .clip(true)
+            .horizontal(|mut strip| {
+                // Desktop Side Panel
+                strip.cell(|ui| {
+                    let rect = ui.available_rect_before_wrap();
+                    let side_panel = DesktopSidePanel::new(
+                        ctx.accounts.get_selected_account(),
+                        &app.decks_cache,
+                        ctx.i18n,
+                    )
+                    .show(ui);
+
+                    if let Some(side_panel) = side_panel {
+                        if side_panel.response.clicked() || side_panel.response.secondary_clicked() {
+                            if let Some(action) = DesktopSidePanel::perform_action(
+                                &mut app.decks_cache,
+                                ctx.accounts,
+                                side_panel.action,
+                                ctx.i18n,
+                            ) {
+                                side_panel_action = Some(action);
+                            }
+                        }
+                    }
+
+                    // vertical sidebar line
+                    ui.painter().vline(
+                        rect.right(),
+                        rect.y_range(),
+                        ui.visuals().widgets.noninteractive.bg_stroke,
+                    );
+                });
+
+                // Channel Sidebar
+                strip.cell(|ui| {
+                    let rect = ui.available_rect_before_wrap();
+                    let mut channel_sidebar =
+                        ChannelSidebar::new(&app.channels_cache, ctx.accounts, ctx.i18n);
+
+                    if let Some(response) = channel_sidebar.show(ui) {
+                        channel_sidebar_action = Some(response.action);
+                    }
+
+                    // vertical sidebar line
+                    ui.painter().vline(
+                        rect.right(),
+                        rect.y_range(),
+                        ui.visuals().widgets.noninteractive.bg_stroke,
+                    );
+                });
+
+                // Normal column view when no channel is selected
+                for col_index in 0..num_cols {
+                    strip.cell(|ui| {
+                        let rect = ui.available_rect_before_wrap();
+                        let v_line_stroke = ui.visuals().widgets.noninteractive.bg_stroke;
+                        let inner_rect = {
+                            let mut inner = rect;
+                            inner.set_right(rect.right() - v_line_stroke.width);
+                            inner
+                        };
+                        let resp = nav::render_nav(col_index, inner_rect, app, ctx, ui);
+                        can_take_drag_from.extend(resp.can_take_drag_from());
+                        responses.push(resp);
+
+                        // vertical line
+                        ui.painter()
+                            .vline(rect.right(), rect.y_range(), v_line_stroke);
+
+                        // we need borrow ui context for processing, so proces
+                        // responses in the last cell
+
+                        if col_index == num_cols - 1 {}
+                    });
+                }
+            });
+    }
 
     // process the side panel action after so we don't change the number of columns during
     // StripBuilder rendering

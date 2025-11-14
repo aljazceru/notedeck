@@ -28,9 +28,9 @@ struct MessageBubbleResponse {
 pub struct ChatView<'a, 'd> {
     timeline_id: &'a TimelineKind,
     timeline_cache: &'a mut TimelineCache,
-    note_options: NoteOptions,
+    _note_options: NoteOptions,
     note_context: &'a mut NoteContext<'d>,
-    jobs: &'a mut JobsCache,
+    _jobs: &'a mut JobsCache,
     col: usize,
 }
 
@@ -46,9 +46,9 @@ impl<'a, 'd> ChatView<'a, 'd> {
         Self {
             timeline_id,
             timeline_cache,
-            note_options,
+            _note_options: note_options,
             note_context,
-            jobs,
+            _jobs: jobs,
             col,
         }
     }
