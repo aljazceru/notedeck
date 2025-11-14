@@ -48,6 +48,9 @@ pub enum DamusState {
 pub struct Damus {
     state: DamusState,
 
+    /// Flag to defer account redirect until after first frame to avoid egui layer conflicts
+    need_account_redirect: bool,
+
     pub decks_cache: DecksCache,
     pub channels_cache: crate::channels::ChannelsCache,
     pub relay_config: crate::relay_config::RelayConfig,
@@ -261,21 +264,28 @@ fn update_damus(damus: &mut Damus, app_ctx: &mut AppContext<'_>, ctx: &egui::Con
             }
 
             // Check if we only have the default fallback account (no real accounts)
-            // If so, redirect to add account screen on first run
+            // If so, set flag to redirect on next frame (to avoid egui layer ID conflicts)
             let selected_account = app_ctx.accounts.get_selected_account();
             let account_count = app_ctx.accounts.cache.into_iter().count();
             if selected_account.key.pubkey == notedeck::FALLBACK_PUBKEY() &&
                selected_account.key.secret_key.is_none() &&
                account_count == 1 {
-                // Only have the fallback account, redirect to add account
-                info!("No real accounts found, redirecting to add account screen");
+                // Only have the fallback account, set flag to redirect after first frame
+                info!("No real accounts found, will redirect to add account screen");
+                damus.need_account_redirect = true;
+            }
+        }
+
+        DamusState::Initialized => {
+            // Perform deferred account redirect if needed
+            if damus.need_account_redirect {
+                damus.need_account_redirect = false;
+                info!("Performing deferred redirect to add account screen");
                 damus.columns_mut(app_ctx.i18n, app_ctx.accounts)
                     .get_selected_router()
                     .route_to(Route::add_account());
             }
         }
-
-        DamusState::Initialized => (),
     };
 
     if let Err(err) = try_process_event(damus, app_ctx, ctx) {
@@ -763,6 +773,7 @@ impl Damus {
             timeline_cache,
             drafts: Drafts::default(),
             state: DamusState::Initializing,
+            need_account_redirect: false,
             note_options,
             options,
             //frame_history: FrameHistory::default(),
@@ -820,6 +831,7 @@ impl Damus {
             timeline_cache: TimelineCache::default(),
             drafts: Drafts::default(),
             state: DamusState::Initializing,
+            need_account_redirect: false,
             note_options: NoteOptions::default(),
             //frame_history: FrameHistory::default(),
             view_state: ViewState::default(),
