@@ -279,6 +279,12 @@ fn handle_eose(
     let sub_kind = if let Some(sub_kind) = subscriptions.subs.get(subid) {
         sub_kind
     } else {
+        // Check if this is an account subscription (relay, mute, contacts)
+        // These are managed separately and don't need to be tracked in the main subscriptions map
+        if ctx.accounts.is_account_sub(subid) {
+            return Ok(());
+        }
+
         let n_subids = subscriptions.subs.len();
         warn!(
             "got unknown eose subid {}, {} tracked subscriptions",
