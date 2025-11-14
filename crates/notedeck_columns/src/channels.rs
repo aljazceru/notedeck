@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use enostr::Pubkey;
 use nostrdb::Transaction;
-use notedeck::{tr, AppContext, Localization, FALLBACK_PUBKEY};
+use notedeck::{AppContext, Localization, FALLBACK_PUBKEY};
 use tracing::{error, info};
 use uuid::Uuid;
 
@@ -78,16 +78,9 @@ impl ChannelList {
         }
     }
 
-    pub fn default_channels(i18n: &mut Localization) -> Self {
-        let mut list = Self::new();
-
-        // Add a default "general" channel
-        list.add_channel(Channel::new(
-            tr!(i18n, "General", "Default channel name").to_string(),
-            vec!["general".to_string()],
-        ));
-
-        list
+    pub fn default_channels(_i18n: &mut Localization) -> Self {
+        // Return empty channel list - user will create their own channels
+        Self::new()
     }
 
     pub fn add_channel(&mut self, channel: Channel) {

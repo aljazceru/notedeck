@@ -730,7 +730,7 @@ impl Damus {
             info!("RelayConfig: loading from disk");
             relay_config
         } else {
-            info!("RelayConfig: creating new with default relays");
+            info!("RelayConfig: creating new empty config (no relays)");
             crate::relay_config::RelayConfig::default()
         };
 
@@ -1136,9 +1136,7 @@ fn timelines_view(
                     ChannelSidebar::new(&app.channels_cache, ctx.accounts, ctx.i18n);
 
                 if let Some(response) = channel_sidebar.show(ui) {
-                    if response.response.clicked() {
-                        channel_sidebar_action = Some(response.action);
-                    }
+                    channel_sidebar_action = Some(response.action);
                 }
 
                 // vertical sidebar line
