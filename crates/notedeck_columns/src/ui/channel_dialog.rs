@@ -7,10 +7,12 @@ pub struct ChannelDialog {
     pub hashtags: String,
     pub is_open: bool,
     pub focus_requested: bool,
+    pub editing_index: Option<usize>,
 }
 
 pub enum ChannelDialogAction {
     Create { name: String, hashtags: Vec<String> },
+    Edit { index: usize, name: String, hashtags: Vec<String> },
     Cancel,
 }
 
@@ -21,6 +23,7 @@ impl ChannelDialog {
             hashtags: String::new(),
             is_open: false,
             focus_requested: false,
+            editing_index: None,
         }
     }
 
@@ -29,6 +32,15 @@ impl ChannelDialog {
         self.name.clear();
         self.hashtags.clear();
         self.focus_requested = false;
+        self.editing_index = None;
+    }
+
+    pub fn open_for_edit(&mut self, index: usize, name: String, hashtags: Vec<String>) {
+        self.is_open = true;
+        self.name = name;
+        self.hashtags = hashtags.join(", ");
+        self.focus_requested = false;
+        self.editing_index = Some(index);
     }
 
     pub fn close(&mut self) {
@@ -46,7 +58,13 @@ impl ChannelDialog {
 
         let mut action: Option<ChannelDialogAction> = None;
 
-        egui::Window::new(tr!(i18n, "Create Channel", "Dialog title for creating a new channel"))
+        let title = if self.editing_index.is_some() {
+            tr!(i18n, "Edit Channel", "Dialog title for editing a channel")
+        } else {
+            tr!(i18n, "Create Channel", "Dialog title for creating a new channel")
+        };
+
+        egui::Window::new(title)
             .collapsible(false)
             .resizable(false)
             .anchor(egui::Align2::CENTER_CENTER, Vec2::ZERO)
@@ -125,10 +143,18 @@ impl ChannelDialog {
                                     .filter(|s| !s.is_empty())
                                     .collect();
 
-                                action = Some(ChannelDialogAction::Create {
-                                    name: self.name.trim().to_string(),
-                                    hashtags,
-                                });
+                                action = if let Some(index) = self.editing_index {
+                                    Some(ChannelDialogAction::Edit {
+                                        index,
+                                        name: self.name.trim().to_string(),
+                                        hashtags,
+                                    })
+                                } else {
+                                    Some(ChannelDialogAction::Create {
+                                        name: self.name.trim().to_string(),
+                                        hashtags,
+                                    })
+                                };
                             }
                         }
                     });
@@ -138,18 +164,24 @@ impl ChannelDialog {
                     // Buttons
                     ui.horizontal(|ui| {
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            // Create button (hashtags are optional)
-                            let create_enabled = !self.name.trim().is_empty();
+                            // Create/Save button (hashtags are optional)
+                            let button_enabled = !self.name.trim().is_empty();
 
-                            let create_button = egui::Button::new(
-                                RichText::new(tr!(i18n, "Create", "Button to create channel"))
+                            let button_text = if self.editing_index.is_some() {
+                                tr!(i18n, "Save", "Button to save channel edits")
+                            } else {
+                                tr!(i18n, "Create", "Button to create channel")
+                            };
+
+                            let button = egui::Button::new(
+                                RichText::new(button_text)
                                     .size(14.0),
                             )
                             .min_size(Vec2::new(80.0, 32.0));
 
-                            let create_response = ui.add_enabled(create_enabled, create_button);
+                            let button_response = ui.add_enabled(button_enabled, button);
 
-                            if create_response.clicked() {
+                            if button_response.clicked() {
                                 let hashtags: Vec<String> = self
                                     .hashtags
                                     .split(',')
@@ -157,10 +189,18 @@ impl ChannelDialog {
                                     .filter(|s| !s.is_empty())
                                     .collect();
 
-                                action = Some(ChannelDialogAction::Create {
-                                    name: self.name.trim().to_string(),
-                                    hashtags,
-                                });
+                                action = if let Some(index) = self.editing_index {
+                                    Some(ChannelDialogAction::Edit {
+                                        index,
+                                        name: self.name.trim().to_string(),
+                                        hashtags,
+                                    })
+                                } else {
+                                    Some(ChannelDialogAction::Create {
+                                        name: self.name.trim().to_string(),
+                                        hashtags,
+                                    })
+                                };
                             }
 
                             ui.add_space(8.0);

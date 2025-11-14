@@ -473,6 +473,55 @@ fn render_damus(damus: &mut Damus, app_ctx: &mut AppContext<'_>, ui: &mut egui::
                     }
                 }
             }
+            ui::ChannelDialogAction::Edit { index, name, hashtags } => {
+                // Edit existing channel
+                let edited = damus
+                    .channels_cache
+                    .active_channels_mut(app_ctx.i18n, app_ctx.accounts)
+                    .edit_channel(
+                        index,
+                        name,
+                        hashtags.clone(),
+                        &mut damus.timeline_cache,
+                        app_ctx.ndb,
+                        app_ctx.pool,
+                    );
+
+                if edited {
+                    // Save channels cache
+                    storage::save_channels_cache(app_ctx.path, &damus.channels_cache);
+
+                    // Subscribe to the new timeline if hashtags changed
+                    let txn = match nostrdb::Transaction::new(app_ctx.ndb) {
+                        Ok(txn) => txn,
+                        Err(e) => {
+                            error!("Failed to create transaction for channel subscription: {}", e);
+                            return app_resp;
+                        }
+                    };
+
+                    if let Some(channel) = damus.channels_cache.active_channels_mut(app_ctx.i18n, app_ctx.accounts).get_channel_mut(index) {
+                        if damus.timeline_cache.get(&channel.timeline_kind).is_none() {
+                            if let Some(result) = damus.timeline_cache.open(
+                                &mut damus.subscriptions,
+                                app_ctx.ndb,
+                                app_ctx.note_cache,
+                                &txn,
+                                app_ctx.pool,
+                                &channel.timeline_kind,
+                            ) {
+                                result.process(
+                                    app_ctx.ndb,
+                                    app_ctx.note_cache,
+                                    &txn,
+                                    &mut damus.timeline_cache,
+                                    app_ctx.unknown_ids,
+                                );
+                            }
+                        }
+                    }
+                }
+            }
             ui::ChannelDialogAction::Cancel => {
                 // Dialog was canceled, nothing to do
             }
@@ -1242,11 +1291,34 @@ fn timelines_view(
                 app.channels_cache
                     .active_channels_mut(ctx.i18n, ctx.accounts)
                     .select_channel(idx);
-                // Save channel state after selection changes
-                storage::save_channels_cache(ctx.path, &app.channels_cache);
+                // Note: Don't save on every selection to avoid excessive disk I/O
+                // Channel selection state will be saved on app close
             }
             ChannelSidebarAction::AddChannel => {
                 app.channel_dialog.open();
+            }
+            ChannelSidebarAction::DeleteChannel(idx) => {
+                let removed = app.channels_cache
+                    .active_channels_mut(ctx.i18n, ctx.accounts)
+                    .remove_channel(idx, &mut app.timeline_cache, ctx.ndb, ctx.pool);
+
+                if removed.is_some() {
+                    // Save channels cache after deletion
+                    storage::save_channels_cache(ctx.path, &app.channels_cache);
+                }
+            }
+            ChannelSidebarAction::EditChannel(idx) => {
+                // Get channel data and open dialog for editing
+                if let Some(channel) = app.channels_cache
+                    .active_channels(ctx.accounts)
+                    .get_channel(idx)
+                {
+                    app.channel_dialog.open_for_edit(
+                        idx,
+                        channel.name.clone(),
+                        channel.hashtags.clone(),
+                    );
+                }
             }
         }
     }

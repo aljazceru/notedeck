@@ -92,11 +92,61 @@ impl ChannelList {
 
     pub fn add_channel(&mut self, channel: Channel) {
         self.channels.push(channel);
+        // Auto-select the newly added channel
+        self.selected = self.channels.len() - 1;
     }
 
-    pub fn remove_channel(&mut self, index: usize) -> Option<Channel> {
+    pub fn edit_channel(
+        &mut self,
+        index: usize,
+        name: String,
+        hashtags: Vec<String>,
+        timeline_cache: &mut TimelineCache,
+        ndb: &mut nostrdb::Ndb,
+        pool: &mut enostr::RelayPool,
+    ) -> bool {
+        if index >= self.channels.len() {
+            return false;
+        }
+
+        let channel = &mut self.channels[index];
+
+        // Unsubscribe from old timeline if hashtags changed
+        let old_timeline_kind = channel.timeline_kind.clone();
+        let new_timeline_kind = TimelineKind::Hashtag(hashtags.clone());
+
+        if old_timeline_kind != new_timeline_kind {
+            if let Err(err) = timeline_cache.pop(&old_timeline_kind, ndb, pool) {
+                error!("Failed to unsubscribe from old channel timeline: {err}");
+            }
+        }
+
+        // Update channel data
+        channel.name = name;
+        channel.hashtags = hashtags.clone();
+        channel.timeline_kind = new_timeline_kind.clone();
+        channel.router = Router::new(vec![Route::timeline(new_timeline_kind)]);
+
+        info!("Updated channel: {}", channel.name);
+        true
+    }
+
+    pub fn remove_channel(
+        &mut self,
+        index: usize,
+        timeline_cache: &mut TimelineCache,
+        ndb: &mut nostrdb::Ndb,
+        pool: &mut enostr::RelayPool,
+    ) -> Option<Channel> {
         if index < self.channels.len() && self.channels.len() > 1 {
             let removed = self.channels.remove(index);
+
+            // Unsubscribe from the timeline
+            if let Err(err) = timeline_cache.pop(&removed.timeline_kind, ndb, pool) {
+                error!("Failed to unsubscribe from channel timeline: {err}");
+            } else {
+                info!("Unsubscribed from removed channel: {}", removed.name);
+            }
 
             // Adjust selected index if needed
             if self.selected >= self.channels.len() {

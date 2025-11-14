@@ -136,13 +136,24 @@ impl SerializableChannelList {
     }
 
     fn channel_list(self) -> ChannelList {
+        let channels: Vec<_> = self
+            .channels
+            .into_iter()
+            .map(|c| c.channel())
+            .collect();
+
+        // Ensure selected index is within bounds
+        let selected = if channels.is_empty() {
+            0
+        } else if self.selected >= channels.len() {
+            channels.len() - 1
+        } else {
+            self.selected
+        };
+
         ChannelList {
-            channels: self
-                .channels
-                .into_iter()
-                .map(|c| c.channel())
-                .collect(),
-            selected: self.selected,
+            channels,
+            selected,
         }
     }
 }
