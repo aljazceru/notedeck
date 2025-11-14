@@ -12,7 +12,12 @@ use crate::{
     support::Support,
     timeline::{self, kind::ListKind, thread::Threads, TimelineCache, TimelineKind},
     toolbar::unseen_notification,
-    ui::{self, toolbar::toolbar, DesktopSidePanel, SidePanelAction},
+    ui::{
+        self,
+        channel_sidebar::CHANNEL_SIDEBAR_WIDTH,
+        toolbar::toolbar,
+        ChannelSidebar, ChannelSidebarAction, DesktopSidePanel, SidePanelAction,
+    },
     view_state::ViewState,
     Result,
 };
@@ -21,7 +26,8 @@ use enostr::{ClientMessage, PoolRelay, Pubkey, RelayEvent, RelayMessage, RelayPo
 use nostrdb::Transaction;
 use notedeck::{
     tr, ui::is_narrow, Accounts, AppAction, AppContext, AppResponse, DataPath, DataPathType,
-    FilterState, Images, JobsCache, Localization, NotedeckOptions, SettingsHandler, UnknownIds,
+    FilterState, Images, JobsCache, Localization, NoteAction, NotedeckOptions, SettingsHandler,
+    UnknownIds,
 };
 use notedeck_ui::{
     media::{MediaViewer, MediaViewerFlags, MediaViewerState},
@@ -43,6 +49,10 @@ pub struct Damus {
     state: DamusState,
 
     pub decks_cache: DecksCache,
+    pub channels_cache: crate::channels::ChannelsCache,
+    pub relay_config: crate::relay_config::RelayConfig,
+    pub channel_dialog: ui::ChannelDialog,
+    pub thread_panel: ui::ThreadPanel,
     pub view_state: ViewState,
     pub drafts: Drafts,
     pub timeline_cache: TimelineCache,
@@ -209,6 +219,24 @@ fn unknown_id_send(unknown_ids: &mut UnknownIds, pool: &mut RelayPool) {
 #[profiling::function]
 fn update_damus(damus: &mut Damus, app_ctx: &mut AppContext<'_>, ctx: &egui::Context) {
     app_ctx.img_cache.urls.cache.handle_io();
+
+    // Handle keyboard shortcuts
+    ctx.input(|i| {
+        // Escape to close dialogs and panels
+        if i.key_pressed(egui::Key::Escape) {
+            if damus.thread_panel.is_open {
+                damus.thread_panel.close();
+            } else if damus.channel_dialog.is_open {
+                damus.channel_dialog.close();
+            }
+        }
+
+        // Cmd+N / Ctrl+N to open new channel dialog
+        let cmd_n = (i.modifiers.command || i.modifiers.ctrl) && i.key_pressed(egui::Key::N);
+        if cmd_n && !damus.channel_dialog.is_open && !damus.thread_panel.is_open {
+            damus.channel_dialog.open();
+        }
+    });
 
     if damus.columns(app_ctx.accounts).columns().is_empty() {
         damus
@@ -392,6 +420,100 @@ fn render_damus(damus: &mut Damus, app_ctx: &mut AppContext<'_>, ui: &mut egui::
 
     fullscreen_media_viewer_ui(ui, &mut damus.view_state.media_viewer, app_ctx.img_cache);
 
+    // Show channel creation dialog
+    if let Some(dialog_action) = damus.channel_dialog.show(ui.ctx(), app_ctx.i18n) {
+        match dialog_action {
+            ui::ChannelDialogAction::Create { name, hashtags } => {
+                // Create new channel
+                let channel = crate::channels::Channel::new(name, hashtags);
+
+                // Add to active channels
+                damus
+                    .channels_cache
+                    .active_channels_mut(app_ctx.i18n, app_ctx.accounts)
+                    .add_channel(channel);
+
+                // Save channels cache
+                storage::save_channels_cache(app_ctx.path, &damus.channels_cache);
+
+                // Subscribe to the new channel
+                let txn = match nostrdb::Transaction::new(app_ctx.ndb) {
+                    Ok(txn) => txn,
+                    Err(e) => {
+                        error!("Failed to create transaction for channel subscription: {}", e);
+                        return app_resp;
+                    }
+                };
+                let channel_count = damus.channels_cache.active_channels(app_ctx.accounts).num_channels();
+                if let Some(channel) = damus.channels_cache.active_channels_mut(app_ctx.i18n, app_ctx.accounts).get_channel_mut(channel_count - 1) {
+                    // Check if timeline is already open (query TimelineCache directly)
+                    if damus.timeline_cache.get(&channel.timeline_kind).is_none() {
+                        if let Some(result) = damus.timeline_cache.open(
+                            &mut damus.subscriptions,
+                            app_ctx.ndb,
+                            app_ctx.note_cache,
+                            &txn,
+                            app_ctx.pool,
+                            &channel.timeline_kind,
+                        ) {
+                            result.process(
+                                app_ctx.ndb,
+                                app_ctx.note_cache,
+                                &txn,
+                                &mut damus.timeline_cache,
+                                app_ctx.unknown_ids,
+                            );
+                        }
+                    }
+                }
+            }
+            ui::ChannelDialogAction::Cancel => {
+                // Dialog was canceled, nothing to do
+            }
+        }
+    }
+
+    // Show thread panel if open
+    if damus.thread_panel.is_open {
+        let mut note_context = notedeck::NoteContext {
+            ndb: app_ctx.ndb,
+            accounts: app_ctx.accounts,
+            img_cache: app_ctx.img_cache,
+            note_cache: app_ctx.note_cache,
+            zaps: app_ctx.zaps,
+            pool: app_ctx.pool,
+            job_pool: app_ctx.job_pool,
+            unknown_ids: app_ctx.unknown_ids,
+            clipboard: app_ctx.clipboard,
+            i18n: app_ctx.i18n,
+            global_wallet: app_ctx.global_wallet,
+        };
+
+        let (panel_action, note_action) = damus.thread_panel.show(
+            ui,
+            &mut damus.threads,
+            damus.note_options,
+            &mut note_context,
+            &mut damus.jobs,
+            0, // col index for thread panel
+        );
+
+        if let Some(action) = panel_action {
+            match action {
+                ui::ThreadPanelAction::Close => {
+                    damus.thread_panel.close();
+                }
+            }
+        }
+
+        // Handle any note actions from the thread panel
+        // (e.g., opening another thread, replying, etc.)
+        if let Some(_note_action) = note_action {
+            // For now, we can ignore note actions within the thread panel
+            // In a full implementation, these would be handled by the action system
+        }
+    }
+
     // We use this for keeping timestamps and things up to date
     //ui.ctx().request_repaint_after(Duration::from_secs(5));
 
@@ -521,6 +643,52 @@ impl Damus {
         let jobs = JobsCache::default();
         let threads = Threads::default();
 
+        // Load or create channels cache
+        let mut channels_cache = if let Some(channels_cache) = crate::storage::load_channels_cache(
+            app_context.path,
+            app_context.i18n,
+        ) {
+            info!("ChannelsCache: loading from disk");
+            channels_cache
+        } else {
+            info!("ChannelsCache: creating new with default channels");
+            crate::channels::ChannelsCache::default_channels_cache(app_context.i18n)
+        };
+
+        // Subscribe to all active channels to fetch data from relays
+        {
+            let active_channels = channels_cache.active_channels_mut(
+                app_context.i18n,
+                app_context.accounts,
+            );
+            active_channels.subscribe_all(
+                &mut subscriptions,
+                &mut timeline_cache,
+                app_context,
+            );
+        }
+
+        // Load or create relay config
+        let relay_config = if let Some(relay_config) = crate::storage::load_relay_config(
+            app_context.path,
+        ) {
+            info!("RelayConfig: loading from disk");
+            relay_config
+        } else {
+            info!("RelayConfig: creating new with default relays");
+            crate::relay_config::RelayConfig::default()
+        };
+
+        // Apply relay config to pool - connect to configured relays
+        for relay_url in relay_config.get_relays() {
+            let wakeup = || {}; // Wakeup closure for relay events
+            if let Err(e) = app_context.pool.add_url(relay_url.clone(), wakeup) {
+                error!("Failed to add relay {}: {}", relay_url, e);
+            } else {
+                info!("Added relay from config: {}", relay_url);
+            }
+        }
+
         Self {
             subscriptions,
             timeline_cache,
@@ -532,6 +700,10 @@ impl Damus {
             view_state: ViewState::default(),
             support,
             decks_cache,
+            channels_cache,
+            relay_config,
+            channel_dialog: ui::ChannelDialog::default(),
+            thread_panel: ui::ThreadPanel::default(),
             unrecognized_args,
             jobs,
             threads,
@@ -564,6 +736,8 @@ impl Damus {
     pub fn mock<P: AsRef<Path>>(data_path: P) -> Self {
         let mut i18n = Localization::default();
         let decks_cache = DecksCache::default_decks_cache(&mut i18n);
+        let channels_cache = crate::channels::ChannelsCache::default_channels_cache(&mut i18n);
+        let relay_config = crate::relay_config::RelayConfig::default();
 
         let path = DataPath::new(&data_path);
         let imgcache_dir = path.path(DataPathType::Cache);
@@ -583,6 +757,10 @@ impl Damus {
             support,
             options,
             decks_cache,
+            channels_cache,
+            relay_config,
+            channel_dialog: ui::ChannelDialog::default(),
+            thread_panel: ui::ThreadPanel::default(),
             unrecognized_args: BTreeSet::default(),
             jobs: JobsCache::default(),
             threads: Threads::default(),
@@ -822,6 +1000,57 @@ fn render_damus_desktop(
     }
 }
 
+/// Process chat view actions like Reply, React, Repost
+fn process_chat_action(
+    action: NoteAction,
+    app: &mut Damus,
+    ctx: &mut AppContext<'_>,
+    ui: &mut egui::Ui,
+) {
+    match action {
+        NoteAction::Note { note_id, .. } => {
+            // Open thread panel for viewing threads
+            app.thread_panel.open(*note_id.bytes());
+        }
+        NoteAction::Reply(note_id) => {
+            // Open thread panel for replying
+            app.thread_panel.open(*note_id.bytes());
+        }
+        NoteAction::React(react_action) => {
+            // Handle reaction (like) - send to relays
+            if let Some(filled) = ctx.accounts.selected_filled() {
+                let txn = match Transaction::new(ctx.ndb) {
+                    Ok(txn) => txn,
+                    Err(e) => {
+                        error!("Failed to create transaction for reaction: {}", e);
+                        return;
+                    }
+                };
+
+                // Send reaction event using existing infrastructure
+                if let Err(err) = crate::actionbar::send_reaction_event(
+                    ctx.ndb,
+                    &txn,
+                    ctx.pool,
+                    filled,
+                    &react_action,
+                ) {
+                    error!("Failed to send reaction: {err}");
+                }
+                // Note: Reaction state is now queried from nostrdb directly,
+                // no need to track in temp state
+            }
+        }
+        NoteAction::Repost(note_id) => {
+            // For now, open thread panel - could add repost dialog later
+            app.thread_panel.open(*note_id.bytes());
+        }
+        _ => {
+            // Other actions not yet supported in chat view
+        }
+    }
+}
+
 fn timelines_view(
     ui: &mut egui::Ui,
     sizes: Size,
@@ -830,15 +1059,42 @@ fn timelines_view(
 ) -> AppResponse {
     let num_cols = get_active_columns(ctx.accounts, &app.decks_cache).num_columns();
     let mut side_panel_action: Option<nav::SwitchingAction> = None;
+    let mut channel_sidebar_action: Option<ChannelSidebarAction> = None;
     let mut responses = Vec::with_capacity(num_cols);
 
     let mut can_take_drag_from = Vec::new();
 
+    // Check if a channel is selected to determine layout
+    let is_channel_selected = app.channels_cache.active_channels(ctx.accounts).selected_channel().is_some();
+    let content_cells = if is_channel_selected { 1 } else { num_cols };
+
     StripBuilder::new(ui)
+        .size(Size::exact(CHANNEL_SIDEBAR_WIDTH))
         .size(Size::exact(ui::side_panel::SIDE_PANEL_WIDTH))
-        .sizes(sizes, num_cols)
+        .sizes(sizes, content_cells)
         .clip(true)
         .horizontal(|mut strip| {
+            // Channel Sidebar
+            strip.cell(|ui| {
+                let rect = ui.available_rect_before_wrap();
+                let mut channel_sidebar =
+                    ChannelSidebar::new(&app.channels_cache, ctx.accounts, ctx.i18n);
+
+                if let Some(response) = channel_sidebar.show(ui) {
+                    if response.response.clicked() {
+                        channel_sidebar_action = Some(response.action);
+                    }
+                }
+
+                // vertical sidebar line
+                ui.painter().vline(
+                    rect.right(),
+                    rect.y_range(),
+                    ui.visuals().widgets.noninteractive.bg_stroke,
+                );
+            });
+
+            // Desktop Side Panel
             strip.cell(|ui| {
                 let rect = ui.available_rect_before_wrap();
                 let side_panel = DesktopSidePanel::new(
@@ -880,30 +1136,82 @@ fn timelines_view(
                 );
             });
 
-            for col_index in 0..num_cols {
+            // Check if a channel is selected
+            // Clone the timeline_kind to avoid borrowing app across the closure
+            let selected_timeline_kind = app.channels_cache
+                .active_channels(ctx.accounts)
+                .selected_channel()
+                .map(|c| c.timeline_kind.clone());
+
+            if let Some(timeline_kind) = selected_timeline_kind {
+                // Render ChatView for the selected channel
                 strip.cell(|ui| {
                     let rect = ui.available_rect_before_wrap();
                     let v_line_stroke = ui.visuals().widgets.noninteractive.bg_stroke;
-                    let inner_rect = {
-                        let mut inner = rect;
-                        inner.set_right(rect.right() - v_line_stroke.width);
-                        inner
+
+                    // Create a NoteContext from AppContext
+                    let mut note_context = notedeck::NoteContext {
+                        ndb: ctx.ndb,
+                        accounts: ctx.accounts,
+                        img_cache: ctx.img_cache,
+                        note_cache: ctx.note_cache,
+                        zaps: ctx.zaps,
+                        pool: ctx.pool,
+                        job_pool: ctx.job_pool,
+                        unknown_ids: ctx.unknown_ids,
+                        clipboard: ctx.clipboard,
+                        i18n: ctx.i18n,
+                        global_wallet: ctx.global_wallet,
                     };
-                    let resp = nav::render_nav(col_index, inner_rect, app, ctx, ui);
-                    can_take_drag_from.extend(resp.can_take_drag_from());
-                    responses.push(resp);
+
+                    // Create a ChatView for the selected channel
+                    let mut chat_view = crate::ui::ChatView::new(
+                        &timeline_kind,
+                        &mut app.timeline_cache,
+                        &mut note_context,
+                        notedeck_ui::NoteOptions::default(),
+                        &mut app.jobs,
+                        0, // col index
+                    );
+
+                    let chat_response = chat_view.ui(ui);
+
+                    // Handle chat view actions
+                    if let Some(Some(action)) = chat_response.output {
+                        process_chat_action(action, app, ctx, ui);
+                    }
 
                     // vertical line
                     ui.painter()
                         .vline(rect.right(), rect.y_range(), v_line_stroke);
-
-                    // we need borrow ui context for processing, so proces
-                    // responses in the last cell
-
-                    if col_index == num_cols - 1 {}
                 });
+            } else {
+                // Normal column view when no channel is selected
+                for col_index in 0..num_cols {
+                    strip.cell(|ui| {
+                        let rect = ui.available_rect_before_wrap();
+                        let v_line_stroke = ui.visuals().widgets.noninteractive.bg_stroke;
+                        let inner_rect = {
+                            let mut inner = rect;
+                            inner.set_right(rect.right() - v_line_stroke.width);
+                            inner
+                        };
+                        let resp = nav::render_nav(col_index, inner_rect, app, ctx, ui);
+                        can_take_drag_from.extend(resp.can_take_drag_from());
+                        responses.push(resp);
 
-                //strip.cell(|ui| timeline::timeline_view(ui, app, timeline_ind));
+                        // vertical line
+                        ui.painter()
+                            .vline(rect.right(), rect.y_range(), v_line_stroke);
+
+                        // we need borrow ui context for processing, so proces
+                        // responses in the last cell
+
+                        if col_index == num_cols - 1 {}
+                    });
+
+                    //strip.cell(|ui| timeline::timeline_view(ui, app, timeline_ind));
+                }
             }
         });
 
@@ -919,6 +1227,22 @@ fn timelines_view(
                 &mut app.subscriptions,
                 ui.ctx(),
             );
+    }
+
+    // process channel sidebar action
+    if let Some(action) = channel_sidebar_action {
+        match action {
+            ChannelSidebarAction::SelectChannel(idx) => {
+                app.channels_cache
+                    .active_channels_mut(ctx.i18n, ctx.accounts)
+                    .select_channel(idx);
+                // Save channel state after selection changes
+                storage::save_channels_cache(ctx.path, &app.channels_cache);
+            }
+            ChannelSidebarAction::AddChannel => {
+                app.channel_dialog.open();
+            }
+        }
     }
 
     let mut app_action: Option<AppAction> = None;
