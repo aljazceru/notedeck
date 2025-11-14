@@ -259,6 +259,20 @@ fn update_damus(damus: &mut Damus, app_ctx: &mut AppContext<'_>, ctx: &egui::Con
             ) {
                 warn!("update_damus init: {err}");
             }
+
+            // Check if we only have the default fallback account (no real accounts)
+            // If so, redirect to add account screen on first run
+            let selected_account = app_ctx.accounts.get_selected_account();
+            let account_count = app_ctx.accounts.cache.into_iter().count();
+            if selected_account.key.pubkey == notedeck::FALLBACK_PUBKEY() &&
+               selected_account.key.secret_key.is_none() &&
+               account_count == 1 {
+                // Only have the fallback account, redirect to add account
+                info!("No real accounts found, redirecting to add account screen");
+                damus.columns_mut(app_ctx.i18n, app_ctx.accounts)
+                    .get_selected_router()
+                    .route_to(Route::add_account());
+            }
         }
 
         DamusState::Initialized => (),

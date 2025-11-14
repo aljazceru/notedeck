@@ -129,35 +129,37 @@ impl ChannelDialog {
                     );
 
                     // Handle Escape key to close dialog
-                    ui.input(|i| {
-                        if i.key_pressed(egui::Key::Escape) {
-                            action = Some(ChannelDialogAction::Cancel);
-                        }
-                        // Handle Enter key when name is focused
-                        if i.key_pressed(egui::Key::Enter) && !hashtags_response.has_focus() {
-                            if !self.name.trim().is_empty() {
-                                let hashtags: Vec<String> = self
-                                    .hashtags
-                                    .split(',')
-                                    .map(|s| s.trim().to_string())
-                                    .filter(|s| !s.is_empty())
-                                    .collect();
+                    let escape_pressed = ui.input(|i| i.key_pressed(egui::Key::Escape));
+                    let enter_pressed = ui.input(|i| i.key_pressed(egui::Key::Enter));
 
-                                action = if let Some(index) = self.editing_index {
-                                    Some(ChannelDialogAction::Edit {
-                                        index,
-                                        name: self.name.trim().to_string(),
-                                        hashtags,
-                                    })
-                                } else {
-                                    Some(ChannelDialogAction::Create {
-                                        name: self.name.trim().to_string(),
-                                        hashtags,
-                                    })
-                                };
-                            }
+                    if escape_pressed {
+                        action = Some(ChannelDialogAction::Cancel);
+                    }
+
+                    // Handle Enter key when name is focused (not hashtags multiline field)
+                    if enter_pressed && !hashtags_response.has_focus() {
+                        if !self.name.trim().is_empty() {
+                            let hashtags: Vec<String> = self
+                                .hashtags
+                                .split(',')
+                                .map(|s| s.trim().to_string())
+                                .filter(|s| !s.is_empty())
+                                .collect();
+
+                            action = if let Some(index) = self.editing_index {
+                                Some(ChannelDialogAction::Edit {
+                                    index,
+                                    name: self.name.trim().to_string(),
+                                    hashtags,
+                                })
+                            } else {
+                                Some(ChannelDialogAction::Create {
+                                    name: self.name.trim().to_string(),
+                                    hashtags,
+                                })
+                            };
                         }
-                    });
+                    }
 
                     ui.add_space(24.0);
 
