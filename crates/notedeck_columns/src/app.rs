@@ -445,6 +445,12 @@ fn process_message(damus: &mut Damus, ctx: &mut AppContext<'_>, relay: &str, msg
                 error!("error handling eose: {}", err);
             }
         }
+        RelayMessage::Closed(sub_id, msg) => {
+            warn!("Subscription closed by {}: {} - {}", relay, sub_id, msg)
+        }
+        RelayMessage::Auth(challenge) => {
+            info!("Auth challenge from {}: {} (auth not yet implemented)", relay, challenge)
+        }
     }
 }
 

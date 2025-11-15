@@ -18,6 +18,8 @@ pub enum RelayMessage<'a> {
     Eose(&'a str),
     Event(&'a str, &'a str),
     Notice(&'a str),
+    Closed(&'a str, &'a str), // subscription_id, message
+    Auth(&'a str),             // challenge
 }
 
 #[derive(Debug)]
@@ -71,6 +73,14 @@ impl<'a> RelayMessage<'a> {
 
     pub fn event(ev: &'a str, sub_id: &'a str) -> Self {
         RelayMessage::Event(sub_id, ev)
+    }
+
+    pub fn closed(sub_id: &'a str, message: &'a str) -> Self {
+        RelayMessage::Closed(sub_id, message)
+    }
+
+    pub fn auth(challenge: &'a str) -> Self {
+        RelayMessage::Auth(challenge)
     }
 
     pub fn from_json(msg: &'a str) -> Result<RelayMessage<'a>> {
@@ -150,6 +160,49 @@ impl<'a> RelayMessage<'a> {
             let message_start = msg.rfind(',').unwrap() + 1;
             let message = &msg[message_start..msg.len() - 2].trim().trim_matches('"');
             return Ok(Self::ok(event_id, status, message));
+        }
+
+        // CLOSED (NIP-01)
+        // Relay response format: ["CLOSED", <subscription_id>, <message>]
+        if msg.len() >= 13 && &msg[0..=9] == "[\"CLOSED\"," {
+            let mut start = 10;
+            while let Some(&b' ') = msg.as_bytes().get(start) {
+                start += 1; // Move past optional spaces
+            }
+
+            // Find the first comma after subscription_id
+            if let Some(comma_index) = msg[start..].find(',') {
+                let subid_end = start + comma_index;
+                let subid = &msg[start..subid_end].trim().trim_matches('"');
+
+                // Extract message (everything between the second comma and the closing bracket)
+                let message_start = subid_end + 1;
+                let message_end = msg.rfind(']').unwrap_or(msg.len()) - 1;
+                if message_start < message_end {
+                    let message = &msg[message_start..message_end].trim().trim_matches('"').trim();
+                    return Ok(Self::closed(subid, message));
+                }
+            }
+            return Err(Error::DecodeFailed("Invalid CLOSED format".into()));
+        }
+
+        // AUTH (NIP-42)
+        // Relay response format: ["AUTH", <challenge>]
+        if msg.len() >= 11 && &msg[0..=7] == "[\"AUTH\"," {
+            let start = if msg.as_bytes().get(8).copied() == Some(b' ') {
+                10 // Skip space after the comma
+            } else {
+                9 // Start immediately after the comma
+            };
+
+            if let Some(end_bracket_index) = msg.rfind(']') {
+                let end = end_bracket_index - 1;
+                if start < end {
+                    let challenge = &msg[start..end].trim().trim_matches('"').trim();
+                    return Ok(RelayMessage::auth(challenge));
+                }
+            }
+            return Err(Error::DecodeFailed("Invalid AUTH format".into()));
         }
 
         Err(Error::DecodeFailed(format!(

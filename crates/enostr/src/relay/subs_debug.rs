@@ -60,6 +60,8 @@ impl From<RelayEvent<'_>> for OwnedRelayEvent {
                     RelayMessage::Eose(s) => format!("EOSE:{s}"),
                     RelayMessage::Event(_, s) => format!("EVENT:{s}"),
                     RelayMessage::Notice(s) => format!("NOTICE:{s}"),
+                    RelayMessage::Closed(sub_id, msg) => format!("CLOSED:{sub_id}:{msg}"),
+                    RelayMessage::Auth(challenge) => format!("AUTH:{challenge}"),
                 };
                 OwnedRelayEvent::Message(relay_msg)
             }
@@ -248,7 +250,11 @@ fn calculate_relay_message_size(message: &RelayMessage) -> usize {
         RelayMessage::OK(result) => calculate_command_result_size(result),
         RelayMessage::Eose(str_ref)
         | RelayMessage::Event(str_ref, _)
-        | RelayMessage::Notice(str_ref) => mem::size_of_val(message) + str_ref.len(),
+        | RelayMessage::Notice(str_ref)
+        | RelayMessage::Auth(str_ref) => mem::size_of_val(message) + str_ref.len(),
+        RelayMessage::Closed(sub_id, msg) => {
+            mem::size_of_val(message) + sub_id.len() + msg.len()
+        }
     }
 }
 
