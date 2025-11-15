@@ -276,7 +276,7 @@ impl Timeline {
                 Filter::new()
                     .kinds([1])
                     .limit(filter::default_limit())
-                    .tags([tag.as_str()], 't')
+                    .tags([tag.to_lowercase().as_str()], 't')
                     .build()
             })
             .collect::<Vec<_>>();
