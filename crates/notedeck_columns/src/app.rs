@@ -51,10 +51,14 @@ pub struct Damus {
     /// Flag to defer account redirect until after first frame to avoid egui layer conflicts
     need_account_redirect: bool,
 
+    /// Flag to show relay dialog if no relays are configured
+    need_relay_prompt: bool,
+
     pub decks_cache: DecksCache,
     pub channels_cache: crate::channels::ChannelsCache,
     pub relay_config: crate::relay_config::RelayConfig,
     pub channel_dialog: ui::ChannelDialog,
+    pub relay_dialog: ui::RelayDialog,
     pub thread_panel: ui::ThreadPanel,
     pub view_state: ViewState,
     pub drafts: Drafts,
@@ -277,6 +281,13 @@ fn update_damus(damus: &mut Damus, app_ctx: &mut AppContext<'_>, ctx: &egui::Con
         }
 
         DamusState::Initialized => {
+            // Perform deferred relay prompt if needed
+            if damus.need_relay_prompt {
+                damus.need_relay_prompt = false;
+                info!("Opening relay dialog - no relays configured");
+                damus.relay_dialog.open();
+            }
+
             // Perform deferred account redirect if needed
             if damus.need_account_redirect {
                 damus.need_account_redirect = false;
@@ -552,6 +563,31 @@ fn render_damus(damus: &mut Damus, app_ctx: &mut AppContext<'_>, ui: &mut egui::
         }
     }
 
+    // Show relay dialog and handle relay addition
+    if let Some(dialog_action) = damus.relay_dialog.show(ui.ctx(), app_ctx.i18n) {
+        match dialog_action {
+            ui::RelayDialogAction::Add { url } => {
+                info!("User adding relay: {}", url);
+                // Add relay to config
+                damus.relay_config.add_relay(url.clone());
+
+                // Save relay config to disk
+                storage::save_relay_config(app_ctx.path, &damus.relay_config);
+
+                // Add relay to pool
+                let wakeup = || {}; // Wakeup closure for relay events
+                if let Err(e) = app_ctx.pool.add_url(url.clone(), wakeup) {
+                    error!("Failed to add relay {}: {}", url, e);
+                } else {
+                    info!("Successfully connected to relay: {}", url);
+                }
+            }
+            ui::RelayDialogAction::Cancel => {
+                // Dialog was canceled, nothing to do
+            }
+        }
+    }
+
     // Show thread panel if open
     if damus.thread_panel.is_open {
         let mut note_context = notedeck::NoteContext {
@@ -797,6 +833,12 @@ impl Damus {
             crate::relay_config::RelayConfig::default()
         };
 
+        // Check if we need to prompt user for a relay
+        let need_relay_prompt = relay_config.is_empty();
+        if need_relay_prompt {
+            info!("No relays configured, will prompt user to add relay");
+        }
+
         // Apply relay config to pool - connect to configured relays
         for relay_url in relay_config.get_relays() {
             let wakeup = || {}; // Wakeup closure for relay events
@@ -813,6 +855,7 @@ impl Damus {
             drafts: Drafts::default(),
             state: DamusState::Initializing,
             need_account_redirect: false,
+            need_relay_prompt,
             note_options,
             options,
             //frame_history: FrameHistory::default(),
@@ -822,6 +865,7 @@ impl Damus {
             channels_cache,
             relay_config,
             channel_dialog: ui::ChannelDialog::default(),
+            relay_dialog: ui::RelayDialog::default(),
             thread_panel: ui::ThreadPanel::default(),
             unrecognized_args,
             jobs,
@@ -871,6 +915,7 @@ impl Damus {
             drafts: Drafts::default(),
             state: DamusState::Initializing,
             need_account_redirect: false,
+            need_relay_prompt: relay_config.is_empty(),
             note_options: NoteOptions::default(),
             //frame_history: FrameHistory::default(),
             view_state: ViewState::default(),
@@ -880,6 +925,7 @@ impl Damus {
             channels_cache,
             relay_config,
             channel_dialog: ui::ChannelDialog::default(),
+            relay_dialog: ui::RelayDialog::default(),
             thread_panel: ui::ThreadPanel::default(),
             unrecognized_args: BTreeSet::default(),
             jobs: JobsCache::default(),

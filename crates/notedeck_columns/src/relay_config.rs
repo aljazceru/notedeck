@@ -17,16 +17,10 @@ impl RelayConfig {
         }
     }
 
-    /// Create a default configuration with some popular relays
+    /// Create an empty default configuration
+    /// Users should be prompted to add relays if none exist
     pub fn default_relays() -> Self {
-        let mut relays = BTreeSet::new();
-
-        // Add some default public relays
-        relays.insert("wss://relay.damus.io".to_string());
-        relays.insert("wss://relay.nostr.band".to_string());
-        relays.insert("wss://nos.lol".to_string());
-
-        Self { relays }
+        Self::new()
     }
 
     pub fn add_relay(&mut self, url: String) -> bool {
@@ -88,7 +82,6 @@ mod tests {
     #[test]
     fn test_default_relays() {
         let config = RelayConfig::default_relays();
-        assert!(!config.is_empty());
-        assert!(config.has_relay("wss://relay.damus.io"));
+        assert!(config.is_empty());
     }
 }
