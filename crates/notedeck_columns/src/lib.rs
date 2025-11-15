@@ -14,6 +14,7 @@ mod deck_state;
 mod decks;
 mod draft;
 pub mod relay_config;
+pub mod startup_config;
 mod key_parsing;
 pub mod login_manager;
 mod media_upload;

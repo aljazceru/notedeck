@@ -1,33 +1,22 @@
-use egui::{
-    vec2, CursorIcon, InnerResponse, Layout, Margin, RichText, ScrollArea, Separator, Stroke,
-    Widget,
-};
-use tracing::{error, info};
+use egui::{vec2, CursorIcon, InnerResponse, Layout, Margin, Separator, Stroke, Widget};
+use tracing::info;
 
 use crate::{
-    accounts::AccountsRoute,
-    app::{get_active_columns_mut, get_decks_mut},
-    app_style::DECK_ICON_SIZE,
-    decks::{DecksAction, DecksCache},
-    nav::SwitchingAction,
-    route::Route,
+    accounts::AccountsRoute, app::get_active_columns_mut, decks::DecksCache,
+    nav::SwitchingAction, route::Route,
 };
 
-use notedeck::{tr, Accounts, Localization, UserAccount};
+use notedeck::{Accounts, Localization, UserAccount};
 use notedeck_ui::{
     anim::{AnimationHelper, ICON_EXPANSION_MULTIPLE},
     app_images, colors, View,
 };
-
-use super::configure_deck::deck_icon;
 
 pub static SIDE_PANEL_WIDTH: f32 = 68.0;
 static ICON_WIDTH: f32 = 40.0;
 
 pub struct DesktopSidePanel<'a> {
     selected_account: &'a UserAccount,
-    decks_cache: &'a DecksCache,
-    i18n: &'a mut Localization,
 }
 
 impl View for DesktopSidePanel<'_> {
@@ -42,9 +31,6 @@ pub enum SidePanelAction {
     ComposeNote,
     Search,
     ExpandSidePanel,
-    NewDeck,
-    SwitchDeck(usize),
-    EditDeck(usize),
     Wallet,
     Account,  // Use existing Account instead of UserAccount
     Settings,
@@ -62,16 +48,8 @@ impl SidePanelResponse {
 }
 
 impl<'a> DesktopSidePanel<'a> {
-    pub fn new(
-        selected_account: &'a UserAccount,
-        decks_cache: &'a DecksCache,
-        i18n: &'a mut Localization,
-    ) -> Self {
-        Self {
-            selected_account,
-            decks_cache,
-            i18n,
-        }
+    pub fn new(selected_account: &'a UserAccount) -> Self {
+        Self { selected_account }
     }
 
     pub fn show(&mut self, ui: &mut egui::Ui) -> Option<SidePanelResponse> {
@@ -124,28 +102,6 @@ impl<'a> DesktopSidePanel<'a> {
                     let search_resp = ui.add(search_button());
                     let column_resp = ui.add(add_column_button());
 
-                    ui.add(Separator::default().horizontal().spacing(8.0).shrink(4.0));
-
-                    ui.add_space(8.0);
-                    ui.add(egui::Label::new(
-                        RichText::new(tr!(
-                            self.i18n,
-                            "DECKS",
-                            "Label for decks section in side panel"
-                        ))
-                        .size(11.0)
-                        .color(ui.visuals().noninteractive().fg_stroke.color),
-                    ));
-                    ui.add_space(8.0);
-                    let add_deck_resp = ui.add(add_deck_button(self.i18n));
-
-                    let decks_inner = ScrollArea::vertical()
-                        .max_height(ui.available_height() - (3.0 * (ICON_WIDTH + 12.0)))
-                        .show(ui, |ui| {
-                            show_decks(ui, self.decks_cache, self.selected_account)
-                        })
-                        .inner;
-
                     /*
                     if expand_resp.clicked() {
                         Some(InnerResponse::new(
@@ -174,27 +130,6 @@ impl<'a> DesktopSidePanel<'a> {
                         Some(InnerResponse::new(SidePanelAction::Search, search_resp))
                     } else if column_resp.clicked() {
                         Some(InnerResponse::new(SidePanelAction::Columns, column_resp))
-                    } else if add_deck_resp.clicked() {
-                        Some(InnerResponse::new(SidePanelAction::NewDeck, add_deck_resp))
-                    } else if decks_inner.response.secondary_clicked() {
-                        info!("decks inner secondary click");
-                        if let Some(clicked_index) = decks_inner.inner {
-                            Some(InnerResponse::new(
-                                SidePanelAction::EditDeck(clicked_index),
-                                decks_inner.response,
-                            ))
-                        } else {
-                            None
-                        }
-                    } else if decks_inner.response.clicked() {
-                        if let Some(clicked_index) = decks_inner.inner {
-                            Some(InnerResponse::new(
-                                SidePanelAction::SwitchDeck(clicked_index),
-                                decks_inner.response,
-                            ))
-                        } else {
-                            None
-                        }
                     } else {
                         None
                     }
@@ -217,7 +152,7 @@ impl<'a> DesktopSidePanel<'a> {
         i18n: &mut Localization,
     ) -> Option<SwitchingAction> {
         let router = get_active_columns_mut(i18n, accounts, decks_cache).get_selected_router();
-        let mut switching_response = None;
+        let switching_response = None;
         match action {
             SidePanelAction::Account => {
                 if router
@@ -272,38 +207,6 @@ impl<'a> DesktopSidePanel<'a> {
             SidePanelAction::ExpandSidePanel => {
                 // TODO
                 info!("Clicked expand side panel button");
-            }
-            SidePanelAction::NewDeck => {
-                if router.routes().iter().any(|r| r == &Route::NewDeck) {
-                    router.go_back();
-                } else {
-                    router.route_to(Route::NewDeck);
-                }
-            }
-            SidePanelAction::SwitchDeck(index) => {
-                switching_response = Some(crate::nav::SwitchingAction::Decks(DecksAction::Switch(
-                    index,
-                )))
-            }
-            SidePanelAction::EditDeck(index) => {
-                if router.routes().iter().any(|r| r == &Route::EditDeck(index)) {
-                    router.go_back();
-                } else {
-                    switching_response = Some(crate::nav::SwitchingAction::Decks(
-                        DecksAction::Switch(index),
-                    ));
-                    if let Some(edit_deck) = get_decks_mut(i18n, accounts, decks_cache)
-                        .decks_mut()
-                        .get_mut(index)
-                    {
-                        edit_deck
-                            .columns_mut()
-                            .get_selected_router()
-                            .route_to(Route::EditDeck(index));
-                    } else {
-                        error!("Cannot push EditDeck route to index {}", index);
-                    }
-                }
             }
             SidePanelAction::Wallet => 's: {
                 if router
@@ -397,71 +300,6 @@ pub fn search_button_impl(color: egui::Color32, line_width: f32) -> impl Widget 
 
 pub fn search_button() -> impl Widget {
     search_button_impl(colors::MID_GRAY, 1.5)
-}
-
-// TODO: convert to responsive button when expanded side panel impl is finished
-
-fn add_deck_button<'a>(i18n: &'a mut Localization) -> impl Widget + 'a {
-    |ui: &mut egui::Ui| -> egui::Response {
-        let img_size = 40.0;
-
-        let max_size = ICON_WIDTH * ICON_EXPANSION_MULTIPLE; // max size of the widget
-        let img = app_images::new_deck_image().max_width(img_size);
-
-        let helper = AnimationHelper::new(ui, "new-deck-icon", vec2(max_size, max_size));
-
-        let cur_img_size = helper.scale_1d_pos(img_size);
-        img.paint_at(
-            ui,
-            helper
-                .get_animation_rect()
-                .shrink((max_size - cur_img_size) / 2.0),
-        );
-
-        helper
-            .take_animation_response()
-            .on_hover_cursor(CursorIcon::PointingHand)
-            .on_hover_text(tr!(
-                i18n,
-                "Add new deck",
-                "Tooltip text for adding a new deck button"
-            ))
-    }
-}
-
-fn show_decks<'a>(
-    ui: &mut egui::Ui,
-    decks_cache: &'a DecksCache,
-    selected_account: &'a UserAccount,
-) -> InnerResponse<Option<usize>> {
-    let show_decks_id = ui.id().with("show-decks");
-    let account_id = selected_account.key.pubkey;
-    let (cur_decks, account_id) = (
-        decks_cache.decks(&account_id),
-        show_decks_id.with(account_id),
-    );
-    let active_index = cur_decks.active_index();
-
-    let (_, mut resp) = ui.allocate_exact_size(vec2(0.0, 0.0), egui::Sense::click());
-    let mut clicked_index = None;
-    for (index, deck) in cur_decks.decks().iter().enumerate() {
-        let highlight = index == active_index;
-        let deck_icon_resp = ui
-            .add(deck_icon(
-                account_id.with(index),
-                Some(deck.icon),
-                DECK_ICON_SIZE,
-                40.0,
-                highlight,
-            ))
-            .on_hover_text_at_pointer(&deck.name)
-            .on_hover_cursor(CursorIcon::PointingHand);
-        if deck_icon_resp.clicked() || deck_icon_resp.secondary_clicked() {
-            clicked_index = Some(index);
-        }
-        resp = resp.union(deck_icon_resp);
-    }
-    InnerResponse::new(clicked_index, resp)
 }
 
 fn user_account_button(user_account: &UserAccount, dark_mode: bool) -> impl Widget + '_ {

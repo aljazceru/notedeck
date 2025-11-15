@@ -411,6 +411,7 @@ impl UrlMimes {
                             + Duration::from_secs(253_402_300_799 / 2), // never expire...
                     },
                 );
+                return None;
             }
             let (sender, promise) = Promise::new();
             ehttp_get_mime_type(url, sender);
