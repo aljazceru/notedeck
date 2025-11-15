@@ -747,6 +747,45 @@ impl Damus {
             );
         }
 
+        // Load startup config (if exists)
+        if let Some(startup_config) = crate::storage::load_startup_config(app_context.path) {
+            info!("StartupConfig: loaded from disk");
+
+            // Add account from nsec if provided
+            if let Some(nsec) = &startup_config.nsec {
+                use enostr::SecretKey;
+                use std::str::FromStr;
+
+                match SecretKey::from_str(nsec.as_str()) {
+                    Ok(secret_key) => {
+                        let keypair = enostr::Keypair::from_secret(secret_key);
+                        info!("StartupConfig: Adding account from nsec: {}", keypair.pubkey);
+                        if let Some(resp) = app_context.accounts.add_account(keypair) {
+                            let txn = nostrdb::Transaction::new(app_context.ndb).expect("txn");
+                            resp.unk_id_action.process_action(
+                                app_context.unknown_ids,
+                                app_context.ndb,
+                                &txn,
+                            );
+                        }
+                    }
+                    Err(e) => {
+                        error!("StartupConfig: Failed to parse nsec: {}", e);
+                    }
+                }
+            }
+
+            // Add relay from startup config if provided
+            if let Some(relay_url) = &startup_config.relay {
+                let wakeup = || {}; // Wakeup closure for relay events
+                if let Err(e) = app_context.pool.add_url(relay_url.clone(), wakeup) {
+                    error!("StartupConfig: Failed to add relay {}: {}", relay_url, e);
+                } else {
+                    info!("StartupConfig: Added relay from config: {}", relay_url);
+                }
+            }
+        }
+
         // Load or create relay config
         let relay_config = if let Some(relay_config) = crate::storage::load_relay_config(
             app_context.path,
@@ -1176,12 +1215,8 @@ fn timelines_view(
             // Desktop Side Panel
             strip.cell(|ui| {
                 let rect = ui.available_rect_before_wrap();
-                let side_panel = DesktopSidePanel::new(
-                    ctx.accounts.get_selected_account(),
-                    &app.decks_cache,
-                    ctx.i18n,
-                )
-                .show(ui);
+                let side_panel =
+                    DesktopSidePanel::new(ctx.accounts.get_selected_account()).show(ui);
 
                 if let Some(side_panel) = side_panel {
                     if side_panel.response.clicked() || side_panel.response.secondary_clicked() {
@@ -1320,12 +1355,8 @@ fn timelines_view(
                 // Desktop Side Panel
                 strip.cell(|ui| {
                     let rect = ui.available_rect_before_wrap();
-                    let side_panel = DesktopSidePanel::new(
-                        ctx.accounts.get_selected_account(),
-                        &app.decks_cache,
-                        ctx.i18n,
-                    )
-                    .show(ui);
+                    let side_panel =
+                        DesktopSidePanel::new(ctx.accounts.get_selected_account()).show(ui);
 
                     if let Some(side_panel) = side_panel {
                         if side_panel.response.clicked() || side_panel.response.secondary_clicked() {
